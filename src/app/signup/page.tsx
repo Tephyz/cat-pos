@@ -1,28 +1,32 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/context/AuthContext";
 
 export default function SignupPage() {
   const [form, setForm] = useState({
     fullname: "",
-    usercode: "",
+    username: "",
+    email: "",
     password: "",
     confirmPassword: "",
   });
 
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const { signUp } = useAuth();
+  const router = useRouter();
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
-
-    
     setForm({ ...form, [name]: value });
-
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (form.password !== form.confirmPassword) {
@@ -30,8 +34,22 @@ export default function SignupPage() {
       return;
     }
 
+    if (form.password.length < 6) {
+      setError("Password should be at least 6 characters.");
+      return;
+    }
+
     setError("");
-    console.log("Signup data:", form);
+    setLoading(true);
+
+    try {
+      await signUp(form.email, form.password, form.username, form.fullname, form.username);
+      router.push("/homepage");
+    } catch (err: any) {
+      setError(err.message || "Failed to sign up");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -65,14 +83,23 @@ export default function SignupPage() {
 
             <input
               type="text"
-              name="usercode"
-              placeholder="User Code"
-              value={form.usercode}
+              name="username"
+              placeholder="Username"
+              value={form.username}
               onChange={handleChange}
               className="w-full border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-black"
               required
             />
 
+            <input
+              type="email"
+              name="email"
+              placeholder="Email"
+              value={form.email}
+              onChange={handleChange}
+              className="w-full border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-black"
+              required
+            />
 
             <input
               type="password"
@@ -98,18 +125,18 @@ export default function SignupPage() {
 
             <button
               type="submit"
-              className="w-full bg-black text-white py-2 rounded-lg font-semibold hover:bg-gray-900 transition"
+              disabled={loading}
+              className="w-full bg-black text-white py-2 rounded-lg font-semibold hover:bg-gray-900 transition disabled:opacity-50"
             >
-              Sign Up
+              {loading ? "Signing Up..." : "Sign Up"}
             </button>
           </form>
 
           <p className="text-sm text-gray-500 mt-4">
-           Already have an account?{" "}
-<Link href="/" className="underline">
-  Login
-</Link>
-
+            Already have an account?{" "}
+            <Link href="/" className="underline">
+              Login
+            </Link>
           </p>
         </div>
       </div>

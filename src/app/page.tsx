@@ -1,34 +1,58 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/context/AuthContext";
 
 export default function SigninPage() {
   const [form, setForm] = useState({
-    usercode: "",
+    email: "",
     password: "",
   });
 
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const { signIn, user } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (user) {
+      router.push("/homepage");
+    }
+  }, [user, router]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setForm({ ...form, [name]: value });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!form.usercode || !form.password) {
-      setError("Please enter your user code and password.");
+    if (!form.email || !form.password) {
+      setError("Please enter your email and password.");
       return;
     }
 
     setError("");
+    setLoading(true);
 
-    console.log("Signin data:", form);
+    try {
+      await signIn(form.email, form.password);
+      router.push("/homepage");
+    } catch (err: any) {
+      setError(err.message || "Failed to sign in");
+    } finally {
+      setLoading(false);
+    }
   };
+
+  if (user) {
+    return <div>Redirecting...</div>;
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100 p-6">
@@ -50,10 +74,10 @@ export default function SigninPage() {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <input
-              type="text"
-              name="usercode"
-              placeholder="User Code"
-              value={form.usercode}
+              type="email"
+              name="email"
+              placeholder="Email"
+              value={form.email}
               onChange={handleChange}
               className="w-full border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-black"
               required
@@ -73,17 +97,18 @@ export default function SigninPage() {
 
             <button
               type="submit"
-              className="w-full bg-black text-white py-2 rounded-lg font-semibold hover:bg-gray-900 transition"
+              disabled={loading}
+              className="w-full bg-black text-white py-2 rounded-lg font-semibold hover:bg-gray-900 transition disabled:opacity-50"
             >
-              Sign In
+              {loading ? "Signing In..." : "Sign In"}
             </button>
           </form>
 
           <p className="text-sm text-gray-500 mt-4">
             Don't have an account?{" "}
-<Link href="/signup" className="underline">
-  Signup
-</Link>
+            <Link href="/signup" className="underline">
+              Signup
+            </Link>
           </p>
         </div>
       </div>

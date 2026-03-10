@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/context/AuthContext";
 
 interface OrderItem {
   name: string;
@@ -12,6 +14,29 @@ interface OrderItem {
 }
 
 export default function POSLayout() {
+  const { user, loading, logout } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!loading && !user) {
+      router.push("/");
+    }
+  }, [user, loading, router]);
+
+  const handleLogout = () => {
+    logout();
+    router.push("/");
+  };
+
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
   const [activeCategory, setActiveCategory] = useState("Coffee");
   const [selectedProduct, setSelectedProduct] = useState<string | null>(null);
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
@@ -21,6 +46,14 @@ export default function POSLayout() {
   const [tempOption, setTempOption] = useState("Hot");
   const [sizeOption, setSizeOption] = useState("Medium");
   const [sugarOption, setSugarOption] = useState("100%");
+
+  if (loading) {
+    return <div>Loading...</div>;
+  }
+
+  if (!user) {
+    return <div>Redirecting to login...</div>;
+  }
   
   const handleRemoveItem = (index: number) => {
     const updatedItems = orderItems.filter((_, i) => i !== index);
@@ -108,9 +141,17 @@ export default function POSLayout() {
         <div className="flex justify-between items-center bg-[#5a3e2b] text-white px-6 py-4 rounded-lg mb-6">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-white rounded-full" />
-            <span className="font-semibold">Sarah Chen</span>
+            <span className="font-semibold">{user?.displayName || "User"}</span>
           </div>
-          <span className="text-sm">2/11/2026 8:21 AM</span>
+          <div className="flex items-center gap-4">
+            <span className="text-sm">{currentTime.toLocaleString()}</span>
+            <button
+              onClick={handleLogout}
+              className="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-sm"
+            >
+              Logout
+            </button>
+          </div>
         </div>
 
         {/* SEARCH */}
