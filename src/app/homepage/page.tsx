@@ -9,6 +9,7 @@ interface OrderItem {
   sugar: string;
   quantity: number;
   price: number;
+  addOns?: string[]; // Optional array for add-ons
 }
 
 export default function POSLayout() {
@@ -17,10 +18,10 @@ export default function POSLayout() {
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
   const [activeFrappeType, setActiveFrappeType] = useState<string | null>(null);
   
-
   const [tempOption, setTempOption] = useState("Hot");
   const [sizeOption, setSizeOption] = useState("Medium");
   const [sugarOption, setSugarOption] = useState("100%");
+  const [selectedAddOns, setSelectedAddOns] = useState<string[]>([]);
   
   const handleRemoveItem = (index: number) => {
     const updatedItems = orderItems.filter((_, i) => i !== index);
@@ -46,8 +47,7 @@ export default function POSLayout() {
     "Yakult Mix": ["Wintermelon", "Blueberry", "Green Apple", "Lychee", "Strawberrys"],
     "Fruit Tea": ["Wintermelon", "Blueberry", "Green Apple", "Lychee", "Strawberrys"],
     "Hot Tea": ["English Breakfast", "Four Red Fruits", "Pure Camomile", "Green Tea & Lemon", "Lemon & Ginger"],
-    Frappe: [],
-    "Add ons": ["Espresso", "Coffee Jelly", "Oreo", "Caramel", "Pearl", "Nata", "Whip Cream"],
+    Frappe: []
   };
 
   const frappeProducts = {
@@ -56,13 +56,22 @@ export default function POSLayout() {
     "Tea Based": ["Wintermelon", "Okinawa", "Capuccino"]
   };
   
+  // Add ons list
+  const addOns = ["Espresso Shot", "Coffee Jelly", "Oreo", "Caramel Syrup", "Pearl", "Nata", "Whip Cream", "Chocolate Syrup", "White Chocolate"];
 
   const handleAddToOrder = () => {
     if (!selectedProduct) return;
 
-    // Calculate price (example: base 3 for Coffee, 2 for Pastries)
-    const basePrice = activeCategory === "Pastries" ? 2 : 3;
-    const price = basePrice + (sizeOption === "Large" ? 1 : 0);
+    // Calculate base price (3 for all drinks, can be adjusted per category)
+    const basePrice = 3;
+    
+    // Size price adjustment
+    const sizePrice = sizeOption === "Large" || sizeOption === "Pot" ? 1 : 0;
+    
+    // Add-ons price (example: $0.50 each)
+    const addOnsPrice = selectedAddOns.length * 0.5;
+    
+    const price = basePrice + sizePrice + addOnsPrice;
 
     const newItem: OrderItem = {
       name: selectedProduct,
@@ -71,6 +80,7 @@ export default function POSLayout() {
       sugar: sugarOption,
       quantity: 1,
       price,
+      addOns: selectedAddOns.length > 0 ? selectedAddOns : undefined,
     };
 
     setOrderItems([...orderItems, newItem]);
@@ -78,6 +88,19 @@ export default function POSLayout() {
     setTempOption("Hot");
     setSizeOption("Medium");
     setSugarOption("100%");
+    setSelectedAddOns([]); // Reset add-ons
+  };
+
+  const handleToggleAddOn = (addOn: string) => {
+    setSelectedAddOns(prev =>
+      prev.includes(addOn)
+        ? prev.filter(item => item !== addOn)
+        : [...prev, addOn]
+    );
+  };
+
+  const handleClearAddOns = () => {
+    setSelectedAddOns([]);
   };
 
   // Calculate totals
@@ -93,10 +116,8 @@ export default function POSLayout() {
     activeCategory === "Frappe"  ||
     activeCategory === "Hot Tea";
 
-  // Check if an item is from Add ons category
-  const isAddOnsItem = (itemName: string) => {
-    return products["Add ons"].includes(itemName);
-  };
+  // Categories that can have add-ons
+  const categoriesWithAddOns = ["Coffee", "Non Coffee", "Milktea", "Yakult Mix", "Fruit Tea", "Frappe"];
 
   return (
     <div className="min-h-screen bg-gray-100 flex">
@@ -159,13 +180,7 @@ export default function POSLayout() {
               <div
                 key={index}
                 className="bg-white rounded-xl shadow p-4 text-center cursor-pointer hover:bg-gray-100"
-                onClick={() => {
-                  if (activeCategory === "Add ons") {
-                    handleQuickAdd(item);
-                  } else {
-                    setSelectedProduct(item);
-                  }
-                }}
+                onClick={() => setSelectedProduct(item)}
               >
                 <p className="font-medium">{item}</p>
               </div>
@@ -212,8 +227,14 @@ export default function POSLayout() {
                     {item.name} x {item.quantity}
                   </p>
                   <p className="text-xs text-gray-500">
-                    {item.temperature} · {item.size} 
-                    {!isAddOnsItem(item.name) && item.sugar && ` · Sugar ${item.sugar}`}
+                    {item.temperature && `${item.temperature} · `}
+                    {item.size && `${item.size} · `}
+                    {item.sugar && `Sugar ${item.sugar}`}
+                    {item.addOns && item.addOns.length > 0 && (
+                      <span className="block mt-1 text-green-600">
+                        + {item.addOns.join(", ")}
+                      </span>
+                    )}
                   </p>
                 </div>
                 <div className="text-right">
@@ -275,91 +296,99 @@ export default function POSLayout() {
         </div>
       </div>
 
-      {/* PRODUCT MODAL */}
+      {/* PRODUCT MODAL - WIDE VERSION */}
       {selectedProduct && (
         <div className="fixed inset-0 bg-white/30 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-96 relative border-2 border-[#5a3e2b]">
+          <div className="bg-white rounded-lg p-6 w-200 relative border-2 border-[#5a3e2b] max-h-[90vh] overflow-y-auto">
             <button
-              className="absolute top-2 right-2 text-gray-500 hover:text-gray-800"
-              onClick={() => setSelectedProduct(null)}
+              className="absolute top-4 right-4 text-gray-500 hover:text-gray-800 text-xl"
+              onClick={() => {
+                setSelectedProduct(null);
+                setSelectedAddOns([]);
+              }}
             >
               ✕
             </button>
-            <h2 className="text-xl font-semibold mb-4">{selectedProduct}</h2>
+            <h2 className="text-2xl font-semibold mb-6 pr-8">{selectedProduct}</h2>
 
-            {/* Product Options */}
-            <div className="space-y-4">
-              {/* Hot / Ice */}
-              {!hideTemperature && (
-                <div>
-                  <p className="font-medium mb-2">Temperature</p>
-                  <div className="flex gap-4">
-                    <button
-                      className={`px-3 py-1 border rounded-lg ${
-                        tempOption === "Hot" ? "bg-[#5a3e2b] text-white" : ""
-                      }`}
-                      onClick={() => setTempOption("Hot")}
-                    >
-                      Hot
-                    </button>
-                    <button
-                      className={`px-3 py-1 border rounded-lg ${
-                        tempOption === "Ice" ? "bg-[#5a3e2b] text-white" : ""
-                      }`}
-                      onClick={() => setTempOption("Ice")}
-                    >
-                      Ice
-                    </button>
+            {/* Product Options - Two Column Layout */}
+            <div className="space-y-6">
+              {/* Top Row - Temperature and Size */}
+              <div className="grid grid-cols-2 gap-6">
+                {/* Hot / Ice */}
+                {!hideTemperature && (
+                  <div>
+                    <p className="font-medium mb-3 text-lg">Temperature</p>
+                    <div className="flex gap-4">
+                      <button
+                        className={`flex-1 px-4 py-2 border rounded-lg text-center ${
+                          tempOption === "Hot" ? "bg-[#5a3e2b] text-white" : "hover:bg-gray-100"
+                        }`}
+                        onClick={() => setTempOption("Hot")}
+                      >
+                        Hot
+                      </button>
+                      <button
+                        className={`flex-1 px-4 py-2 border rounded-lg text-center ${
+                          tempOption === "Ice" ? "bg-[#5a3e2b] text-white" : "hover:bg-gray-100"
+                        }`}
+                        onClick={() => setTempOption("Ice")}
+                      >
+                        Ice
+                      </button>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              {/* Size */}
-              <div>
-                <p className="font-medium mb-2">Size</p>
-                <div className="flex gap-4">
-                  {activeCategory === "Hot Tea" ? (
-                    <>
-                      <button
-                        className={`px-3 py-1 border rounded-lg ${sizeOption === "220 ml" ? "bg-[#5a3e2b] text-white" : ""}`}
-                        onClick={() => setSizeOption("220 ml")}
-                      >
-                        220 ml
-                      </button>
-                      <button
-                        className={`px-3 py-1 border rounded-lg ${sizeOption === "Pot" ? "bg-[#5a3e2b] text-white" : ""}`}
-                        onClick={() => setSizeOption("Pot")}
-                      >
-                        Pot
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        className={`px-3 py-1 border rounded-lg ${sizeOption === "Medium" ? "bg-[#5a3e2b] text-white" : ""}`}
-                        onClick={() => setSizeOption("Medium")}
-                      >
-                        Medium
-                      </button>
-                      <button
-                        className={`px-3 py-1 border rounded-lg ${sizeOption === "Large" ? "bg-[#5a3e2b] text-white" : ""}`}
-                        onClick={() => setSizeOption("Large")}
-                      >
-                        Large
-                      </button>
-                    </>
-                  )}
+                {/* Size */}
+                <div>
+                  <p className="font-medium mb-3 text-lg">Size</p>
+                  <div className="flex gap-4">
+                    {activeCategory === "Hot Tea" ? (
+                      <>
+                        <button
+                          className={`flex-1 px-4 py-2 border rounded-lg text-center ${sizeOption === "220 ml" ? "bg-[#5a3e2b] text-white" : "hover:bg-gray-100"}`}
+                          onClick={() => setSizeOption("220 ml")}
+                        >
+                          220 ml
+                        </button>
+                        <button
+                          className={`flex-1 px-4 py-2 border rounded-lg text-center ${sizeOption === "Pot" ? "bg-[#5a3e2b] text-white" : "hover:bg-gray-100"}`}
+                          onClick={() => setSizeOption("Pot")}
+                        >
+                          Pot
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          className={`flex-1 px-4 py-2 border rounded-lg text-center ${sizeOption === "Medium" ? "bg-[#5a3e2b] text-white" : "hover:bg-gray-100"}`}
+                          onClick={() => setSizeOption("Medium")}
+                        >
+                          Medium
+                        </button>
+                        <button
+                          className={`flex-1 px-4 py-2 border rounded-lg text-center ${sizeOption === "Large" ? "bg-[#5a3e2b] text-white" : "hover:bg-gray-100"}`}
+                          onClick={() => setSizeOption("Large")}
+                        >
+                          Large
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
 
-              {/* Sugar Level */}
+              {/* Sugar Level - Full Width */}
               <div>
-                <p className="font-medium mb-2">Sugar Level</p>
-                <div className="flex gap-4">
+                <p className="font-medium mb-3 text-lg">Sugar Level</p>
+                <div className="flex gap-3">
                   {["0%", "20%", "50%", "80%", "100%"].map((sugar) => (
                     <button
                       key={sugar}
-                      className={`px-3 py-1 border rounded-lg ${sugarOption === sugar ? "bg-[#5a3e2b] text-white" : ""}`}
+                      className={`flex-1 px-4 py-2 border rounded-lg text-center ${
+                        sugarOption === sugar ? "bg-[#5a3e2b] text-white" : "hover:bg-gray-100"
+                      }`}
                       onClick={() => setSugarOption(sugar)}
                     >
                       {sugar}
@@ -368,12 +397,69 @@ export default function POSLayout() {
                 </div>
               </div>
 
+              {/* Add Ons Section - Only show for applicable categories */}
+              {categoriesWithAddOns.includes(activeCategory) && (
+                <div>
+                  <div className="flex justify-between items-center mb-3">
+                    <p className="font-medium text-lg">Add Ons (+$0.50 each)</p>
+                    <button
+                      onClick={handleClearAddOns}
+                      className="text-sm text-gray-500 hover:text-[#5a3e2b] underline"
+                    >
+                      Clear all
+                    </button>
+                  </div>
+                  
+                  {/* None option and Add-ons in a row */}
+                  <div className="flex gap-3">
+                    <button
+                      className={`w-24 px-4 py-2 border rounded-lg text-center ${
+                        selectedAddOns.length === 0
+                          ? "bg-[#5a3e2b] text-white"
+                          : "hover:bg-gray-100"
+                      }`}
+                      onClick={handleClearAddOns}
+                    >
+                      None
+                    </button>
+                    
+                    <div className="flex-1 grid grid-cols-4 gap-2">
+                      {addOns.map((addOn) => (
+                        <button
+                          key={addOn}
+                          className={`px-3 py-2 border rounded-lg text-sm ${
+                            selectedAddOns.includes(addOn)
+                              ? "bg-[#5a3e2b] text-white"
+                              : "hover:bg-gray-100"
+                          }`}
+                          onClick={() => handleToggleAddOn(addOn)}
+                        >
+                          {addOn}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  {/* Selected add-ons summary */}
+                  {selectedAddOns.length > 0 && (
+                    <div className="mt-3 p-3 bg-gray-50 rounded-lg">
+                      <p className="text-sm font-medium text-gray-700">
+                        Selected: {selectedAddOns.join(", ")}
+                      </p>
+                      <p className="text-sm text-gray-500 mt-1">
+                        +${(selectedAddOns.length * 0.5).toFixed(2)} add-ons fee
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Add to Order */}
               <button
-                className="w-full mt-4 bg-[#5a3e2b] text-white py-2 rounded-lg font-semibold"
+                className="w-full mt-4 bg-[#5a3e2b] text-white py-3 rounded-lg font-semibold text-lg hover:bg-[#6f5238] transition-colors"
                 onClick={handleAddToOrder}
               >
-                Add to Order
+                Add to Order — ${(3 + (sizeOption === "Large" || sizeOption === "Pot" ? 1 : 0) + (selectedAddOns.length * 0.5)).toFixed(2)}
               </button>
             </div>
           </div>
