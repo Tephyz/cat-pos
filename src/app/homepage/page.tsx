@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
+import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 
 interface OrderItem {
   name: string;
@@ -384,6 +386,55 @@ export default function POSLayout() {
   const tax = +(subtotal * 0.08).toFixed(2);
   const total = +(subtotal + tax).toFixed(2);
 
+  const [checkoutMessage, setCheckoutMessage] = useState<string | null>(null);
+  const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false);
+
+  const processCheckout = async (paymentMethod: "Cash" | "GCash") => {
+    if (orderItems.length === 0) {
+      setCheckoutMessage("No items in the cart to checkout.");
+      return;
+    }
+
+    try {
+      const sanitizedItems = orderItems.map(item => {
+        const cleaned: Record<string, unknown> = {
+          name: item.name,
+          category: item.category ?? "",
+          temperature: item.temperature ?? "",
+          size: item.size ?? "",
+          sugar: item.sugar ?? "",
+          quantity: item.quantity,
+          price: item.price,
+        };
+
+        if (Array.isArray(item.addOns) && item.addOns.length > 0) {
+          cleaned.addOns = item.addOns;
+        }
+
+        if (typeof item.variant !== "undefined") {
+          cleaned.variant = item.variant;
+        }
+
+        return cleaned;
+      });
+
+      await addDoc(collection(db, "orders"), {
+        items: sanitizedItems,
+        totalAmount: total,
+        paymentMethod,
+        cashierName: user?.displayName ?? "Unknown",
+        createdAt: serverTimestamp(),
+      });
+
+      setOrderItems([]);
+      setCheckoutMessage(null);
+      setIsSuccessModalOpen(true);
+    } catch (error) {
+      console.error("Checkout failed:", error);
+      setCheckoutMessage("Checkout failed. Please try again.");
+    }
+  };
+
   const activeTabStyle = { background: "#3b2212", color: "white", boxShadow: "0 4px 12px rgba(59,34,18,0.25)" };
   const inactiveTabStyle = { background: "white", color: "#6b4c30", border: "1.5px solid #e8ddd4" };
   const activeOptStyle = { background: "#3b2212", color: "white" };
@@ -425,7 +476,7 @@ export default function POSLayout() {
 
         {/* SEARCH */}
         <div className="relative mb-5">
-          <span className="absolute left-4 top-1/2 -translate-y-1/2">🔍</span>
+          <span className="absolute left-4 top-1/2 -translate-y-1/2">🔎︎</span>
           <input
             type="text"
             placeholder="Search products..."
@@ -617,6 +668,7 @@ export default function POSLayout() {
 
         <div className="space-y-2 mt-2">
           <button disabled={orderItems.length === 0}
+            onClick={() => processCheckout("Cash")}
             className="w-full py-4 rounded-xl font-normal transition-all"
             style={{ fontSize: "15px", ...(orderItems.length === 0
               ? { background: "#e8e0d8", color: "#b09070", cursor: "not-allowed" }
@@ -624,6 +676,7 @@ export default function POSLayout() {
             Cash {orderItems.length > 0 && `— ₱${total.toFixed(2)}`}
           </button>
           <button disabled={orderItems.length === 0}
+            onClick={() => processCheckout("GCash")}
             className="w-full py-4 rounded-xl font-normal transition-all"
             style={{ fontSize: "15px", ...(orderItems.length === 0
               ? { background: "#e8e0d8", color: "#b09070", cursor: "not-allowed" }
@@ -631,7 +684,27 @@ export default function POSLayout() {
             GCash {orderItems.length > 0 && `— ₱${total.toFixed(2)}`}
           </button>
         </div>
+        {checkoutMessage && (
+          <p className="text-center text-sm mt-2" style={{ color: checkoutMessage.includes("failed") ? "#c0392b" : "#2d7a38" }}>
+            {checkoutMessage}
+          </p>
+        )}
       </div>
+
+      {isSuccessModalOpen && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-50">
+          <div className="bg-white rounded-2xl p-8 shadow-xl text-center mx-4 max-w-lg w-full">
+            <h2 className="text-2xl font-bold mb-3" style={{ color: "#3b2212" }}>Order Completed Successfully!</h2>
+            <p className="text-sm mb-6" style={{ color: "#6b4c30" }}>Your order has been saved and recorded in Firestore.</p>
+            <button
+              onClick={() => setIsSuccessModalOpen(false)}
+              className="px-6 py-3 rounded-lg text-white font-semibold"
+              style={{ background: "#4a3b32" }}>
+              Make another order
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* PRODUCT MODAL */}
       {selectedProduct && (
