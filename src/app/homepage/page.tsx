@@ -6,7 +6,7 @@ import { useAuth } from "@/context/AuthContext";
 
 interface OrderItem {
   name: string;
-  category: string; // ← added
+  category: string;
   temperature: string;
   size: string;
   sugar: string;
@@ -44,7 +44,7 @@ export default function POSLayout() {
   const [selectedVariant, setSelectedVariant] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedProductIsFood, setSelectedProductIsFood] = useState(false);
-  const [selectedProductCategory, setSelectedProductCategory] = useState(""); // ← added
+  const [selectedProductCategory, setSelectedProductCategory] = useState("");
 
   if (loading) return <div>Loading...</div>;
   if (!user) return <div>Redirecting to login...</div>;
@@ -75,10 +75,181 @@ export default function POSLayout() {
     "Sides & Snacks": ["French Fries", "Chicken Fingers", "Nachos", "Quesadillas"],
     "Sandwiches & Burgers": ["Burger", "Cheese Burger", "Ham & Cheese"],
     Breakfast: ["French Toast", "Waffle", "Pancake"],
-    "Desserts & Pastries": ["Cheesecake", "Empanada", "Muffin", "Cookies", "Popcorn", "Pancake"],
+    "Desserts & Pastries": ["Cheesecake", "Empanada", "Muffin", "Cookies", "Popcorn", "Pancake (Dessert)"],
     "Silog Meals": ["Tapa", "Bangus", "Spam", "Hotdog", "Ham", "Longganisa"],
     Pasta: ["Spaghetti", "Tuna Pesto"],
     Salads: ["Vegetable Salad"],
+  };
+
+  // ── PRICING TABLES (in PHP ₱) ──
+
+  // Coffee: { M, L }
+  const coffeePrices: Record<string, { M: number; L: number }> = {
+    "Americano":           { M: 100, L: 120 },
+    "Cappuccino":          { M: 150, L: 170 },
+    "Hazelnut":            { M: 150, L: 170 },
+    "Caramel Macchiato":   { M: 150, L: 170 },
+    "Mocha":               { M: 150, L: 170 },
+    "Spanish Latte":       { M: 150, L: 170 },
+    "Salted Caramel Latte":{ M: 150, L: 170 },
+    "Dirty Matcha":        { M: 150, L: 170 },
+    "Vanilla Latte":       { M: 150, L: 170 },
+  };
+
+  // Non Coffee: { M, L }
+  const nonCoffeePrices: Record<string, { M: number; L: number }> = {
+    "Choco":          { M: 140, L: 160 },
+    "Dark Choco":     { M: 140, L: 160 },
+    "Matcha latte":   { M: 140, L: 160 },
+    "Salted Caramel": { M: 140, L: 160 },
+    "Caramel":        { M: 140, L: 160 },
+  };
+
+  // Milktea: { M, L }
+  // Wintermelon M120 L140 | Okinawa M120 L140 | Dark Choco M115 L135 | Capuccino M115 L135
+  const milkteaPrices: Record<string, { M: number; L: number }> = {
+    "Wintermelon": { M: 120, L: 140 },
+    "Okinawa":     { M: 120, L: 140 },
+    "Dark Choco":  { M: 115, L: 135 },
+    "Capuccino":   { M: 115, L: 135 },
+  };
+
+  // Yakult Mix: { M, L }
+  // All M150 L170
+  const yakultMixPrices: Record<string, { M: number; L: number }> = {
+    "Wintermelon": { M: 150, L: 170 },
+    "Blueberry":   { M: 150, L: 170 },
+    "Green Apple": { M: 150, L: 170 },
+    "Lychee":      { M: 150, L: 170 },
+    "Strawberry":  { M: 150, L: 170 },
+  };
+
+  // Fruit Tea: { M, L }
+  // All M110 L130
+  const fruitTeaPrices: Record<string, { M: number; L: number }> = {
+    "Wintermelon": { M: 110, L: 130 },
+    "Blueberry":   { M: 110, L: 130 },
+    "Green Apple": { M: 110, L: 130 },
+    "Lychee":      { M: 110, L: 130 },
+    "Strawberry":  { M: 110, L: 130 },
+  };
+
+  // Hot Tea: fixed price ₱120, sizes: 220ml or Pot
+  const hotTeaPrices: Record<string, number> = {
+    "English Breakfast":  120,
+    "Four Red Fruits":    120,
+    "Pure Camomile":      120,
+    "Green Tea & Lemon":  120,
+    "Lemon & Ginger":     120,
+  };
+
+  // Frappe Coffee Based: { M, L }
+  // Java Chip M155 L175 | Coffee Jelly M155 L175 | Dark Mocha M155 L175 | Caramel M155 L170
+  const frappeCoffeeBasedPrices: Record<string, { M: number; L: number }> = {
+    "Java Chip":    { M: 155, L: 175 },
+    "Coffee Jelly": { M: 155, L: 175 },
+    "Dark Mocha":   { M: 155, L: 175 },
+    "Caramel":      { M: 155, L: 175 },
+  };
+
+  // Frappe Cream Based: { M, L }
+  // All M150 L170
+  const frappeCreamBasedPrices: Record<string, { M: number; L: number }> = {
+    "Vanilla":              { M: 150, L: 170 },
+    "Cookies & Cream":      { M: 150, L: 170 },
+    "Strawberries & Cream": { M: 150, L: 170 },
+    "Blue Berries & Cream": { M: 150, L: 170 },
+    "Choco Chip":           { M: 150, L: 170 },
+    "Caramel":              { M: 150, L: 170 },
+    "Salted Caramel":       { M: 150, L: 170 },
+  };
+
+  // Frappe Tea Based: { M, L }
+  // All M140 L160
+  const frappeTeaBasedPrices: Record<string, { M: number; L: number }> = {
+    "Wintermelon": { M: 140, L: 160 },
+    "Okinawa":     { M: 140, L: 160 },
+    "Capuccino":   { M: 140, L: 160 },
+  };
+
+  // Food prices (fixed, in PHP)
+  const foodPrices: Record<string, number> = {
+    // Grilled / Fried
+    "Liempo":        220,
+    "Leg Quarters":  220,
+    // Sides & Snacks
+    "French Fries":     130,
+    "Chicken Fingers":  200,
+    "Nachos":           200,
+    "Quesadillas":      0,   // variant-based below
+    // Quesadillas variants
+    "Quesadillas (Beef)":   200,
+    "Quesadillas (Cheese)": 170,
+    // Sandwiches & Burgers
+    "Burger":       200,
+    "Cheese Burger":200,
+    "Ham & Cheese": 180,
+    // Breakfast
+    "French Toast": 150,
+    "Waffle":       150,
+    "Pancake":      150,
+    // Desserts & Pastries
+    "Cheesecake": 120,
+    "Empanada":   120,
+    "Muffin":     100,
+    "Cookies":    120,
+    "Popcorn":    100,
+    "Pancake (Dessert)": 120,
+    // Silog Meals
+    "Tapa":       220,
+    "Bangus":     220,
+    "Spam":       190,
+    "Hotdog":     160,
+    "Ham":        160,
+    "Longganisa": 160,
+    // Pasta
+    "Spaghetti":  220,
+    "Tuna Pesto": 220,
+    // Salads
+    "Vegetable Salad": 180,
+  };
+
+  // Add-on price
+  const ADD_ON_PRICE = 30;
+
+  // ── Helper: get base price for a drink ──
+  const getDrinkPrice = (productName: string, size: string, category: string, frappeType: string | null): number => {
+    const s = size === "Large" || size === "Pot" || size === "M - Pot" ? "L" : "M";
+    // Always match by CATEGORY first — product names repeat across categories
+    switch (category) {
+      case "Coffee":
+        return coffeePrices[productName]?.[s as "M"|"L"] ?? 150;
+      case "Non Coffee":
+        return nonCoffeePrices[productName]?.[s as "M"|"L"] ?? 140;
+      case "Milktea":
+        return milkteaPrices[productName]?.[s as "M"|"L"] ?? 120;
+      case "Yakult Mix":
+        return yakultMixPrices[productName]?.[s as "M"|"L"] ?? 150;
+      case "Fruit Tea":
+        return fruitTeaPrices[productName]?.[s as "M"|"L"] ?? 110;
+      case "Hot Tea":
+        return hotTeaPrices[productName] ?? 120;
+      default: {
+        // Frappe — use frappeType
+        const fType = frappeType ?? getFrappeType(productName);
+        if (fType === "Coffee Based") return frappeCoffeeBasedPrices[productName]?.[s as "M"|"L"] ?? 155;
+        if (fType === "Cream Based")  return frappeCreamBasedPrices[productName]?.[s as "M"|"L"] ?? 150;
+        if (fType === "Tea Based")    return frappeTeaBasedPrices[productName]?.[s as "M"|"L"] ?? 140;
+        return 150;
+      }
+    }
+  };
+
+  const getFrappeType = (name: string): string | null => {
+    for (const [type, items] of Object.entries(frappeProducts)) {
+      if (items.includes(name)) return type;
+    }
+    return null;
   };
 
   const allFoodItems = Object.values(foodProducts).flat();
@@ -89,11 +260,8 @@ export default function POSLayout() {
 
   // ── Helper: get category label for any product ──
   const getCategoryLabel = (item: string): string => {
-    // If not searching, use the active category directly — most accurate
     if (!isSearching) {
-      if (activeCategory === "Frappe" && activeFrappeType) {
-        return `Frappe · ${activeFrappeType}`;
-      }
+      if (activeCategory === "Frappe" && activeFrappeType) return `Frappe · ${activeFrappeType}`;
       if (activeCategory === "Food & Bites") {
         for (const [sub, items] of Object.entries(foodProducts)) {
           if (items.includes(item)) return `Food & Bites · ${sub}`;
@@ -102,7 +270,6 @@ export default function POSLayout() {
       }
       return activeCategory;
     }
-    // When searching — guess from product lists (frappe first to avoid false matches)
     for (const [sub, items] of Object.entries(frappeProducts)) {
       if (items.includes(item)) return `Frappe · ${sub}`;
     }
@@ -146,30 +313,66 @@ export default function POSLayout() {
     ? !checkIsFood(selectedProduct || "")
     : categoriesWithAddOns.includes(activeCategory);
 
-  const modalPrice = isFood
-    ? 5 + selectedAddOns.length * 0.5
-    : 3 + (sizeOption === "Large" || sizeOption === "Pot" ? 1 : 0) + selectedAddOns.length * 0.5;
+  // ── Compute modal preview price ──
+  const getModalPrice = (): number => {
+    if (!selectedProduct) return 0;
+    if (isFood) {
+      if (selectedProduct === "Quesadillas") {
+        const variantKey = selectedVariant ? `Quesadillas (${selectedVariant})` : "Quesadillas";
+        return (foodPrices[variantKey] ?? 0) + selectedAddOns.length * ADD_ON_PRICE;
+      }
+      return (foodPrices[selectedProduct] ?? 0) + selectedAddOns.length * ADD_ON_PRICE;
+    }
+    // determine category for search mode
+    const cat = isSearching ? getCategoryLabel(selectedProduct).split(" · ")[0] : activeCategory;
+    const fType = isSearching ? getFrappeType(selectedProduct) : activeFrappeType;
+    const base = getDrinkPrice(selectedProduct, sizeOption, cat, fType);
+    return base + selectedAddOns.length * ADD_ON_PRICE;
+  };
+
+  const modalPrice = getModalPrice();
 
   const handleAddToOrder = () => {
     if (!selectedProduct) return;
     if (selectedProduct === "Quesadillas" && !selectedVariant) return;
-    const basePrice = isFood ? 5 : 3;
-    const sizePrice = sizeOption === "Large" || sizeOption === "Pot" ? 1 : 0;
-    const addOnsPrice = selectedAddOns.length * 0.5;
-    const price = basePrice + (isFood ? 0 : sizePrice) + addOnsPrice;
+
+    let price: number;
+    let displayName = selectedProduct;
+
+    if (isFood) {
+      if (selectedProduct === "Quesadillas" && selectedVariant) {
+        displayName = `Quesadillas (${selectedVariant})`;
+        price = (foodPrices[displayName] ?? 0) + selectedAddOns.length * ADD_ON_PRICE;
+      } else {
+        price = (foodPrices[selectedProduct] ?? 0) + selectedAddOns.length * ADD_ON_PRICE;
+      }
+    } else {
+      const cat = isSearching ? getCategoryLabel(selectedProduct).split(" · ")[0] : activeCategory;
+      const fType = isSearching ? getFrappeType(selectedProduct) : activeFrappeType;
+      const base = getDrinkPrice(selectedProduct, sizeOption, cat, fType);
+      price = base + selectedAddOns.length * ADD_ON_PRICE;
+    }
+
     const newItem: OrderItem = {
-      name: selectedProduct === "Quesadillas" && selectedVariant ? `Quesadillas (${selectedVariant})` : selectedProduct,
-      category: selectedProductCategory, // ← save category
+      name: displayName,
+      category: selectedProductCategory,
       temperature: isFood ? "" : tempOption,
       size: isFood ? "" : sizeOption,
       sugar: isFood ? "" : sugarOption,
-      quantity: 1, price,
+      quantity: 1,
+      price,
       addOns: selectedAddOns.length > 0 ? selectedAddOns : undefined,
     };
+
     setOrderItems([...orderItems, newItem]);
-    setSelectedProduct(null); setTempOption("Hot"); setSizeOption("Medium");
-    setSugarOption("100%"); setSelectedAddOns([]); setSelectedVariant(null);
-    setSelectedProductIsFood(false); setSelectedProductCategory("");
+    setSelectedProduct(null);
+    setTempOption("Hot");
+    setSizeOption("Medium");
+    setSugarOption("100%");
+    setSelectedAddOns([]);
+    setSelectedVariant(null);
+    setSelectedProductIsFood(false);
+    setSelectedProductCategory("");
   };
 
   const handleToggleAddOn = (addOn: string) => {
@@ -186,11 +389,10 @@ export default function POSLayout() {
   const activeOptStyle = { background: "#3b2212", color: "white" };
   const inactiveOptStyle = { background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" };
 
-  // Helper to open product
   const openProduct = (item: string) => {
     setSelectedProduct(item);
     setSelectedProductIsFood(checkIsFood(item));
-    setSelectedProductCategory(getCategoryLabel(item)); // ← detect category
+    setSelectedProductCategory(getCategoryLabel(item));
   };
 
   return (
@@ -373,7 +575,6 @@ export default function POSLayout() {
                     <p className="font-semibold text-sm" style={{ color: "#3b2212" }}>
                       {item.name} <span style={{ color: "#a07850" }}>x{item.quantity}</span>
                     </p>
-                    {/* ← Category label — drinks only */}
                     {item.category && !item.category.includes("Food & Bites") && (
                       <p className="text-xs mt-0.5 font-medium" style={{ color: "#3b2212", opacity: 0.5 }}>
                         {item.category}
@@ -389,7 +590,7 @@ export default function POSLayout() {
                     )}
                   </div>
                   <div className="flex flex-col items-end gap-1 ml-2">
-                    <p className="font-normal text-sm" style={{ color: "#3b2212" }}>${item.price.toFixed(2)}</p>
+                    <p className="font-normal text-sm" style={{ color: "#3b2212" }}>₱{item.price.toFixed(0)}</p>
                     <button onClick={() => handleRemoveItem(index)}
                       className="text-xs rounded-full w-5 h-5 flex items-center justify-center"
                       style={{ background: "#f0e8e0", color: "#a07850" }}>x</button>
@@ -403,13 +604,13 @@ export default function POSLayout() {
         {orderItems.length > 0 && (
           <div className="py-4 space-y-2 mt-2" style={{ borderTop: "1.5px solid #e8ddd4" }}>
             <div className="flex justify-between text-sm" style={{ color: "#a07850" }}>
-              <span>Subtotal</span><span>${subtotal.toFixed(2)}</span>
+              <span>Subtotal</span><span>₱{subtotal.toFixed(0)}</span>
             </div>
             <div className="flex justify-between text-sm" style={{ color: "#a07850" }}>
-              <span>Tax (8%)</span><span>${tax.toFixed(2)}</span>
+              <span>Tax (8%)</span><span>₱{tax.toFixed(2)}</span>
             </div>
             <div className="flex justify-between font-normal text-base" style={{ color: "#3b2212" }}>
-              <span>Total</span><span>${total.toFixed(2)}</span>
+              <span>Total</span><span>₱{total.toFixed(2)}</span>
             </div>
           </div>
         )}
@@ -420,14 +621,14 @@ export default function POSLayout() {
             style={{ fontSize: "15px", ...(orderItems.length === 0
               ? { background: "#e8e0d8", color: "#b09070", cursor: "not-allowed" }
               : { background: "#3b2212", color: "white" }) }}>
-            Cash {orderItems.length > 0 && `— $${total.toFixed(2)}`}
+            Cash {orderItems.length > 0 && `— ₱${total.toFixed(2)}`}
           </button>
           <button disabled={orderItems.length === 0}
             className="w-full py-4 rounded-xl font-normal transition-all"
             style={{ fontSize: "15px", ...(orderItems.length === 0
               ? { background: "#e8e0d8", color: "#b09070", cursor: "not-allowed" }
               : { background: "#0070ba", color: "white" }) }}>
-            GCash {orderItems.length > 0 && `— $${total.toFixed(2)}`}
+            GCash {orderItems.length > 0 && `— ₱${total.toFixed(2)}`}
           </button>
         </div>
       </div>
@@ -442,7 +643,13 @@ export default function POSLayout() {
             <button
               className="absolute top-4 right-4 w-8 h-8 rounded-full flex items-center justify-center text-sm"
               style={{ background: "#f7f3ef", color: "#3b2212", border: "1px solid #e8ddd4" }}
-              onClick={() => { setSelectedProduct(null); setSelectedAddOns([]); setSelectedVariant(null); setSelectedProductIsFood(false); setSelectedProductCategory(""); }}>
+              onClick={() => {
+                setSelectedProduct(null);
+                setSelectedAddOns([]);
+                setSelectedVariant(null);
+                setSelectedProductIsFood(false);
+                setSelectedProductCategory("");
+              }}>
               x
             </button>
 
@@ -457,9 +664,10 @@ export default function POSLayout() {
                   <div className="flex gap-3">
                     {quesadillasVariants.map((v) => (
                       <button key={v} onClick={() => setSelectedVariant(v)}
-                        className="flex-1 px-4 py-2 rounded-xl text-sm font-normal transition-all"
+                        className="flex-1 px-3 py-3 rounded-xl font-normal transition-all flex flex-col items-center gap-0.5"
                         style={selectedVariant === v ? activeOptStyle : inactiveOptStyle}>
-                        {v}
+                        <span style={{ fontSize: "14px" }}>{v}</span>
+                        <span style={{ fontSize: "12px", opacity: 0.75 }}>₱{v === "Beef" ? "200" : "170"}</span>
                       </button>
                     ))}
                   </div>
@@ -486,7 +694,7 @@ export default function POSLayout() {
                   <div>
                     <p className="font-normal mb-2 text-sm" style={{ color: "#3b2212" }}>Size</p>
                     <div className="flex gap-2">
-                      {(activeCategory === "Hot Tea" ? ["220 ml", "Pot"] : ["Medium", "Large"]).map((s) => (
+                      {(activeCategory === "Hot Tea" ? ["M - 220ml", "M - Pot"] : ["Medium", "Large"]).map((s) => (
                         <button key={s} onClick={() => setSizeOption(s)}
                           className="flex-1 px-4 py-3 rounded-xl font-normal transition-all"
                           style={{ fontSize: "15px", ...(sizeOption === s ? activeOptStyle : inactiveOptStyle) }}>
@@ -517,7 +725,7 @@ export default function POSLayout() {
                 <div>
                   <div className="flex justify-between items-center mb-2">
                     <p className="font-semibold text-sm" style={{ color: "#3b2212" }}>
-                      Add Ons <span style={{ color: "#a07850" }}>(+$0.50 each)</span>
+                      Add Ons <span style={{ color: "#a07850" }}>(+₱30 each)</span>
                     </p>
                     <button onClick={handleClearAddOns} className="text-xs underline" style={{ color: "#a07850" }}>Clear all</button>
                   </div>
@@ -538,7 +746,7 @@ export default function POSLayout() {
                   {selectedAddOns.length > 0 && (
                     <div className="mt-3 p-3 rounded-xl text-xs" style={{ background: "#faf7f4", color: "#6b4c30" }}>
                       <span className="font-normal">Selected:</span> {selectedAddOns.join(", ")}
-                      <span className="ml-2" style={{ color: "#a07850" }}>+${(selectedAddOns.length * 0.5).toFixed(2)}</span>
+                      <span className="ml-2" style={{ color: "#a07850" }}>+₱{(selectedAddOns.length * ADD_ON_PRICE).toFixed(0)}</span>
                     </div>
                   )}
                 </div>
@@ -551,7 +759,7 @@ export default function POSLayout() {
                 style={selectedProduct === "Quesadillas" && !selectedVariant
                   ? { background: "#e8e0d8", color: "#b09070", cursor: "not-allowed" }
                   : { background: "#3b2212", color: "white" }}>
-                Add to Order — ${modalPrice.toFixed(2)}
+                Add to Order — ₱{modalPrice.toFixed(0)}
               </button>
             </div>
           </div>
