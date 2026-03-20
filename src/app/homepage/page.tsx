@@ -21,12 +21,32 @@ interface OrderItem {
 export default function POSLayout() {
   const { user, loading, logout } = useAuth();
   const router = useRouter();
+  const [logoutError, setLogoutError] = useState("");
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   useEffect(() => {
-    if (!loading && !user) router.push("/");
+    if (!loading && !user) {
+      router.replace("/");
+    }
   }, [user, loading, router]);
 
-  const handleLogout = () => { logout(); router.push("/"); };
+  const handleLogout = async () => {
+    const userConfirmed = window.confirm("Are you sure you want to log out?");
+    if (!userConfirmed) return;
+
+    setLogoutError("");
+    setIsLoggingOut(true);
+
+    try {
+      await logout();
+      router.replace("/");
+    } catch (err: any) {
+      console.error("Logout error in UI:", err);
+      setLogoutError(err?.message || "Failed to logout. Please try again.");
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
 
   const [currentTime, setCurrentTime] = useState(new Date());
   useEffect(() => {
@@ -47,6 +67,8 @@ export default function POSLayout() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedProductIsFood, setSelectedProductIsFood] = useState(false);
   const [selectedProductCategory, setSelectedProductCategory] = useState("");
+  const [checkoutMessage, setCheckoutMessage] = useState<string | null>(null);
+  const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false);
 
   if (loading) return <div>Loading...</div>;
   if (!user) return <div>Redirecting to login...</div>;
@@ -386,9 +408,6 @@ export default function POSLayout() {
   const tax = +(subtotal * 0.08).toFixed(2);
   const total = +(subtotal + tax).toFixed(2);
 
-  const [checkoutMessage, setCheckoutMessage] = useState<string | null>(null);
-  const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false);
-
   const processCheckout = async (paymentMethod: "Cash" | "GCash") => {
     if (orderItems.length === 0) {
       setCheckoutMessage("No items in the cart to checkout.");
@@ -467,12 +486,16 @@ export default function POSLayout() {
               <p className="text-white text-sm font-normal">{currentTime.toLocaleString()}</p>
             </div>
             <button onClick={handleLogout}
-              className="px-4 py-2 rounded-xl text-sm font-normal"
+              disabled={isLoggingOut}
+              className="px-4 py-2 rounded-xl text-sm font-normal disabled:opacity-50"
               style={{ background: "#c0392b", color: "white" }}>
-              Logout
+              {isLoggingOut ? "Logging out..." : "Logout"}
             </button>
           </div>
         </div>
+        {logoutError && (
+          <div className="px-6 py-2 text-sm text-red-500">{logoutError}</div>
+        )}
 
         {/* SEARCH */}
         <div className="relative mb-5">
