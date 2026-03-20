@@ -26,7 +26,10 @@ export default function POSLayout() {
     if (!loading && !user) router.push("/");
   }, [user, loading, router]);
 
-  const handleLogout = () => { logout(); router.push("/"); };
+  const handleLogout = async () => { 
+    await logout(); 
+    router.push("/"); 
+  };
 
   const [currentTime, setCurrentTime] = useState(new Date());
   useEffect(() => {
@@ -47,6 +50,8 @@ export default function POSLayout() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedProductIsFood, setSelectedProductIsFood] = useState(false);
   const [selectedProductCategory, setSelectedProductCategory] = useState("");
+  const [checkoutMessage, setCheckoutMessage] = useState<string | null>(null);
+  const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false);
 
   if (loading) return <div>Loading...</div>;
   if (!user) return <div>Redirecting to login...</div>;
@@ -385,9 +390,6 @@ export default function POSLayout() {
   const subtotal = orderItems.reduce((acc, item) => acc + item.price * item.quantity, 0);
   const tax = +(subtotal * 0.08).toFixed(2);
   const total = +(subtotal + tax).toFixed(2);
-
-  const [checkoutMessage, setCheckoutMessage] = useState<string | null>(null);
-  const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false);
 
   const processCheckout = async (paymentMethod: "Cash" | "GCash") => {
     if (orderItems.length === 0) {
