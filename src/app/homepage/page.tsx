@@ -3,7 +3,8 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+// UPDATE: Idinagdag na natin dito ang query, where, at getDocs
+import { collection, addDoc, serverTimestamp, runTransaction, doc, increment, query, where, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
 interface OrderItem {
@@ -90,7 +91,6 @@ export default function POSLayout() {
 
   // ── PRICING TABLES (in PHP ₱) ──
 
-  // Coffee: { M, L }
   const coffeePrices: Record<string, { M: number; L: number }> = {
     "Americano":           { M: 100, L: 120 },
     "Cappuccino":          { M: 150, L: 170 },
@@ -103,7 +103,6 @@ export default function POSLayout() {
     "Vanilla Latte":       { M: 150, L: 170 },
   };
 
-  // Non Coffee: { M, L }
   const nonCoffeePrices: Record<string, { M: number; L: number }> = {
     "Choco":          { M: 140, L: 160 },
     "Dark Choco":     { M: 140, L: 160 },
@@ -112,8 +111,6 @@ export default function POSLayout() {
     "Caramel":        { M: 140, L: 160 },
   };
 
-  // Milktea: { M, L }
-  // Wintermelon M120 L140 | Okinawa M120 L140 | Dark Choco M115 L135 | Capuccino M115 L135
   const milkteaPrices: Record<string, { M: number; L: number }> = {
     "Wintermelon": { M: 120, L: 140 },
     "Okinawa":     { M: 120, L: 140 },
@@ -121,8 +118,6 @@ export default function POSLayout() {
     "Capuccino":   { M: 115, L: 135 },
   };
 
-  // Yakult Mix: { M, L }
-  // All M150 L170
   const yakultMixPrices: Record<string, { M: number; L: number }> = {
     "Wintermelon": { M: 150, L: 170 },
     "Blueberry":   { M: 150, L: 170 },
@@ -131,8 +126,6 @@ export default function POSLayout() {
     "Strawberry":  { M: 150, L: 170 },
   };
 
-  // Fruit Tea: { M, L }
-  // All M110 L130
   const fruitTeaPrices: Record<string, { M: number; L: number }> = {
     "Wintermelon": { M: 110, L: 130 },
     "Blueberry":   { M: 110, L: 130 },
@@ -141,7 +134,6 @@ export default function POSLayout() {
     "Strawberry":  { M: 110, L: 130 },
   };
 
-  // Hot Tea: fixed price ₱120, sizes: 220ml or Pot
   const hotTeaPrices: Record<string, number> = {
     "English Breakfast":  120,
     "Four Red Fruits":    120,
@@ -150,8 +142,6 @@ export default function POSLayout() {
     "Lemon & Ginger":     120,
   };
 
-  // Frappe Coffee Based: { M, L }
-  // Java Chip M155 L175 | Coffee Jelly M155 L175 | Dark Mocha M155 L175 | Caramel M155 L170
   const frappeCoffeeBasedPrices: Record<string, { M: number; L: number }> = {
     "Java Chip":    { M: 155, L: 175 },
     "Coffee Jelly": { M: 155, L: 175 },
@@ -159,8 +149,6 @@ export default function POSLayout() {
     "Caramel":      { M: 155, L: 175 },
   };
 
-  // Frappe Cream Based: { M, L }
-  // All M150 L170
   const frappeCreamBasedPrices: Record<string, { M: number; L: number }> = {
     "Vanilla":              { M: 150, L: 170 },
     "Cookies & Cream":      { M: 150, L: 170 },
@@ -171,63 +159,48 @@ export default function POSLayout() {
     "Salted Caramel":       { M: 150, L: 170 },
   };
 
-  // Frappe Tea Based: { M, L }
-  // All M140 L160
   const frappeTeaBasedPrices: Record<string, { M: number; L: number }> = {
     "Wintermelon": { M: 140, L: 160 },
     "Okinawa":     { M: 140, L: 160 },
     "Capuccino":   { M: 140, L: 160 },
   };
 
-  // Food prices (fixed, in PHP)
   const foodPrices: Record<string, number> = {
-    // Grilled / Fried
     "Liempo":        220,
     "Leg Quarters":  220,
-    // Sides & Snacks
     "French Fries":     130,
     "Chicken Fingers":  200,
     "Nachos":           200,
-    "Quesadillas":      0,   // variant-based below
-    // Quesadillas variants
+    "Quesadillas":      0,
     "Quesadillas (Beef)":   200,
     "Quesadillas (Cheese)": 170,
-    // Sandwiches & Burgers
     "Burger":       200,
     "Cheese Burger":200,
     "Ham & Cheese": 180,
-    // Breakfast
     "French Toast": 150,
     "Waffle":       150,
     "Pancake":      150,
-    // Desserts & Pastries
     "Cheesecake": 120,
     "Empanada":   120,
     "Muffin":     100,
     "Cookies":    120,
     "Popcorn":    100,
     "Pancake (Dessert)": 120,
-    // Silog Meals
     "Tapa":       220,
     "Bangus":     220,
     "Spam":       190,
     "Hotdog":     160,
     "Ham":        160,
     "Longganisa": 160,
-    // Pasta
     "Spaghetti":  220,
     "Tuna Pesto": 220,
-    // Salads
     "Vegetable Salad": 180,
   };
 
-  // Add-on price
   const ADD_ON_PRICE = 30;
 
-  // ── Helper: get base price for a drink ──
   const getDrinkPrice = (productName: string, size: string, category: string, frappeType: string | null): number => {
     const s = size === "Large" || size === "Pot" || size === "M - Pot" ? "L" : "M";
-    // Always match by CATEGORY first — product names repeat across categories
     switch (category) {
       case "Coffee":
         return coffeePrices[productName]?.[s as "M"|"L"] ?? 150;
@@ -242,7 +215,6 @@ export default function POSLayout() {
       case "Hot Tea":
         return hotTeaPrices[productName] ?? 120;
       default: {
-        // Frappe — use frappeType
         const fType = frappeType ?? getFrappeType(productName);
         if (fType === "Coffee Based") return frappeCoffeeBasedPrices[productName]?.[s as "M"|"L"] ?? 155;
         if (fType === "Cream Based")  return frappeCreamBasedPrices[productName]?.[s as "M"|"L"] ?? 150;
@@ -265,7 +237,6 @@ export default function POSLayout() {
   const quesadillasVariants = ["Beef", "Cheese"];
   const addOns = ["Espresso", "Coffee Jelly", "Oreo", "Caramel", "Pearl", "Nata", "Whip Cream"];
 
-  // ── Helper: get category label for any product ──
   const getCategoryLabel = (item: string): string => {
     if (!isSearching) {
       if (activeCategory === "Frappe" && activeFrappeType) return `Frappe · ${activeFrappeType}`;
@@ -289,7 +260,6 @@ export default function POSLayout() {
     return "";
   };
 
-  // ── ALL PRODUCTS FLAT LIST for search ──
   const allProducts: string[] = [
     ...Object.values(products).flat(),
     ...allFrappeItems,
@@ -320,7 +290,6 @@ export default function POSLayout() {
     ? !checkIsFood(selectedProduct || "")
     : categoriesWithAddOns.includes(activeCategory);
 
-  // ── Compute modal preview price ──
   const getModalPrice = (): number => {
     if (!selectedProduct) return 0;
     if (isFood) {
@@ -330,7 +299,6 @@ export default function POSLayout() {
       }
       return (foodPrices[selectedProduct] ?? 0) + selectedAddOns.length * ADD_ON_PRICE;
     }
-    // determine category for search mode
     const cat = isSearching ? getCategoryLabel(selectedProduct).split(" · ")[0] : activeCategory;
     const fType = isSearching ? getFrappeType(selectedProduct) : activeFrappeType;
     const base = getDrinkPrice(selectedProduct, sizeOption, cat, fType);
@@ -391,6 +359,7 @@ export default function POSLayout() {
   const tax = +(subtotal * 0.08).toFixed(2);
   const total = +(subtotal + tax).toFixed(2);
 
+  // ─── UPDATED PROCESS CHECKOUT FUNCTION ───
   const processCheckout = async (paymentMethod: "Cash" | "GCash") => {
     if (orderItems.length === 0) {
       setCheckoutMessage("No items in the cart to checkout.");
@@ -420,12 +389,62 @@ export default function POSLayout() {
         return cleaned;
       });
 
-      await addDoc(collection(db, "orders"), {
-        items: sanitizedItems,
-        totalAmount: total,
-        paymentMethod,
-        cashierName: user?.displayName ?? "Unknown",
-        createdAt: serverTimestamp(),
+      // Serving sizes mapping (ml/grams per serving)
+      const servingSizes: Record<string, number> = {
+        'Pearl': 50,
+        'Nata de Coco': 40,
+        'Espresso': 30,
+      };
+
+      // 1. Bilangin muna lahat ng ibabawas
+      const addOnDeductions: Record<string, number> = {};
+      orderItems.forEach(item => {
+        if (Array.isArray(item.addOns) && item.addOns.length > 0) {
+          item.addOns.forEach(addOn => {
+            const deduction = (servingSizes[addOn] || 1) * item.quantity;
+            addOnDeductions[addOn] = (addOnDeductions[addOn] || 0) + deduction;
+          });
+        }
+      });
+
+      // 2. Hanapin ang TOTOONG Document ID sa database base sa pangalan
+      const addOnNames = Object.keys(addOnDeductions);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const inventoryRefsToUpdate: { ref: any, deduction: number }[] = [];
+
+      if (addOnNames.length > 0) {
+        const q = query(collection(db, "inventory"), where("name", "in", addOnNames));
+        const querySnapshot = await getDocs(q);
+
+        querySnapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          if (addOnDeductions[data.name]) {
+            inventoryRefsToUpdate.push({
+              ref: docSnap.ref, // Ito na yung totoong random ID (e.g., 2ZTrBRm...)
+              deduction: addOnDeductions[data.name]
+            });
+          }
+        });
+      }
+
+      // 3. I-save ang order at bawasan ang inventory nang sabay gamit ang Transaction
+      await runTransaction(db, async (transaction) => {
+        // Operation 1: Save order document
+        const orderDocRef = doc(collection(db, "orders"));
+        transaction.set(orderDocRef, {
+          items: sanitizedItems,
+          totalAmount: total,
+          paymentMethod,
+          cashierName: user?.displayName ?? "Unknown",
+          createdAt: serverTimestamp(),
+        });
+
+        // Operation 2: Bawasan ang inventory gamit yung tamang Document IDs
+        inventoryRefsToUpdate.forEach(({ ref, deduction }) => {
+          transaction.update(ref, {
+            quantity: increment(-deduction)
+          });
+        });
       });
 
       setOrderItems([]);
@@ -450,10 +469,7 @@ export default function POSLayout() {
 
   return (
     <div className="min-h-screen flex" style={{ background: "#ede8e3" }}>
-
       <div className="flex-1 p-5 flex flex-col" style={{ minHeight: "100vh" }}>
-
-        {/* TOP BAR */}
         <div className="flex justify-between items-center px-6 py-4 rounded-2xl mb-5"
           style={{ background: "linear-gradient(135deg, #3b2212 0%, #6b3f22 100%)" }}>
           <div className="flex items-center gap-3">
@@ -476,7 +492,6 @@ export default function POSLayout() {
           </div>
         </div>
 
-        {/* SEARCH */}
         <div className="relative mb-5">
           <span className="absolute left-4 top-1/2 -translate-y-1/2">🔎︎</span>
           <input
@@ -497,7 +512,6 @@ export default function POSLayout() {
           )}
         </div>
 
-        {/* SEARCH RESULTS */}
         {isSearching ? (
           <>
             <p className="text-sm mb-3" style={{ color: "#a07850" }}>
@@ -518,7 +532,6 @@ export default function POSLayout() {
           </>
         ) : (
           <>
-            {/* CATEGORY TABS */}
             <div className="flex gap-2 mb-4 flex-wrap">
               {Object.keys(products).map((cat) => (
                 <button key={cat}
@@ -530,7 +543,6 @@ export default function POSLayout() {
               ))}
             </div>
 
-            {/* FRAPPE SUB-TABS */}
             {activeCategory === "Frappe" && (
               <div className="flex gap-2 mb-5 p-3 rounded-xl flex-wrap" style={{ background: "#ede4db" }}>
                 {Object.keys(frappeProducts).map((type) => (
@@ -544,7 +556,6 @@ export default function POSLayout() {
               </div>
             )}
 
-            {/* FOOD & BITES SUB-TABS */}
             {activeCategory === "Food & Bites" && (
               <div className="flex gap-2 mb-5 p-3 rounded-xl flex-wrap" style={{ background: "#ede4db" }}>
                 <button
@@ -564,7 +575,6 @@ export default function POSLayout() {
               </div>
             )}
 
-            {/* PRODUCT GRID */}
             <div className="grid grid-cols-4 gap-4">
               {activeCategory !== "Frappe" && activeCategory !== "Food & Bites" &&
                 products[activeCategory as keyof typeof products]?.map((item, i) => (
@@ -601,10 +611,8 @@ export default function POSLayout() {
         )}
       </div>
 
-      {/* ORDER PANEL */}
       <div className="w-96 flex flex-col h-screen sticky top-0 p-5"
         style={{ background: "white", borderLeft: "1.5px solid #e8ddd4" }}>
-
         <div className="flex justify-between items-center mb-5">
           <h2 className="text-2xl font-bold" style={{ color: "#3b2212" }}>Order</h2>
           {orderItems.length > 0 && (
@@ -697,7 +705,6 @@ export default function POSLayout() {
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-50">
           <div className="bg-white rounded-2xl p-8 shadow-xl text-center mx-4 max-w-lg w-full">
             <h2 className="text-2xl font-bold mb-3" style={{ color: "#3b2212" }}>Order Completed Successfully!</h2>
-            <p className="text-sm mb-6" style={{ color: "#6b4c30" }}>Your order has been saved and recorded in Firestore.</p>
             <button
               onClick={() => setIsSuccessModalOpen(false)}
               className="px-6 py-3 rounded-lg text-white font-semibold"
@@ -708,7 +715,6 @@ export default function POSLayout() {
         </div>
       )}
 
-      {/* PRODUCT MODAL */}
       {selectedProduct && (
         <div className="fixed inset-0 flex items-center justify-center z-50"
           style={{ background: "rgba(0,0,0,0.4)", backdropFilter: "blur(4px)" }}>
