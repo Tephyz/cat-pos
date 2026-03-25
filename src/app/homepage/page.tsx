@@ -53,12 +53,32 @@ export default function POSLayout() {
   const [selectedProductCategory, setSelectedProductCategory] = useState("");
   const [checkoutMessage, setCheckoutMessage] = useState<string | null>(null);
   const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false);
+  const [discount, setDiscount] = useState<"None" | "PWD" | "Senior">("None");
+  const [confirmModal, setConfirmModal] = useState<{ open: boolean; method: "Cash" | "GCash" | null }>({ open: false, method: null });
+  const [cashModal, setCashModal] = useState(false);
+  const [amountTendered, setAmountTendered] = useState("");
+  const [lastTransaction, setLastTransaction] = useState<{ number: string; method: string; total: number; discountAmount: number; amountTendered: string } | null>(null);
+  const [qtyInputs, setQtyInputs] = useState<Record<number, string>>({});
 
   if (loading) return <div>Loading...</div>;
   if (!user) return <div>Redirecting to login...</div>;
 
   const handleRemoveItem = (index: number) => {
     setOrderItems(orderItems.filter((_, i) => i !== index));
+  };
+
+  const handleIncreaseQty = (index: number) => {
+    setOrderItems(orderItems.map((item, i) =>
+      i === index ? { ...item, quantity: item.quantity + 1 } : item
+    ));
+  };
+
+  const handleDecreaseQty = (index: number) => {
+    setOrderItems(orderItems.map((item, i) => {
+      if (i !== index) return item;
+      if (item.quantity <= 1) return item;
+      return { ...item, quantity: item.quantity - 1 };
+    }));
   };
 
   const products = {
@@ -88,8 +108,6 @@ export default function POSLayout() {
     Pasta: ["Spaghetti", "Tuna Pesto"],
     Salads: ["Vegetable Salad"],
   };
-
-  // ── PRICING TABLES (in PHP ₱) ──
 
   const coffeePrices: Record<string, { M: number; L: number }> = {
     "Americano":           { M: 100, L: 120 },
@@ -354,12 +372,30 @@ export default function POSLayout() {
     setSelectedAddOns(prev => prev.includes(addOn) ? prev.filter(i => i !== addOn) : [...prev, addOn]);
   };
   const handleClearAddOns = () => setSelectedAddOns([]);
+        
+  const subtotal = orderItems.reduce(
+  (acc, item) => acc + item.price * item.quantity,
+  0
+);
 
-  const subtotal = orderItems.reduce((acc, item) => acc + item.price * item.quantity, 0);
-  const tax = +(subtotal * 0.08).toFixed(2);
-  const total = +(subtotal + tax).toFixed(2);
+let discountAmount = 0;
+let total = subtotal;
 
-  // ─── UPDATED PROCESS CHECKOUT FUNCTION ───
+if (discount === "PWD" || discount === "Senior") {
+  discountAmount = subtotal * 0.20;
+  total = subtotal - discountAmount;
+}
+
+discountAmount = +discountAmount.toFixed(2);
+total = +total.toFixed(2);
+
+  const generateTransactionNumber = () => {
+    const now = new Date();
+    const date = now.toISOString().slice(0, 10).replace(/-/g, "");
+    const seq = String(Math.floor(Math.random() * 9000) + 1000);
+    return `TXN-${date}-${seq}`;
+  };
+
   const processCheckout = async (paymentMethod: "Cash" | "GCash") => {
     if (orderItems.length === 0) {
       setCheckoutMessage("No items in the cart to checkout.");
@@ -367,6 +403,8 @@ export default function POSLayout() {
     }
 
     try {
+      const transactionNumber = generateTransactionNumber();
+
       const sanitizedItems = orderItems.map(item => {
         const cleaned: Record<string, unknown> = {
           name: item.name,
@@ -389,14 +427,12 @@ export default function POSLayout() {
         return cleaned;
       });
 
-      // Serving sizes mapping (ml/grams per serving)
       const servingSizes: Record<string, number> = {
         'Pearl': 50,
         'Nata de Coco': 40,
         'Espresso': 30,
       };
 
-      // 1. Bilangin muna lahat ng ibabawas
       const addOnDeductions: Record<string, number> = {};
       orderItems.forEach(item => {
         if (Array.isArray(item.addOns) && item.addOns.length > 0) {
@@ -407,7 +443,6 @@ export default function POSLayout() {
         }
       });
 
-      // 2. Hanapin ang TOTOONG Document ID sa database base sa pangalan
       const addOnNames = Object.keys(addOnDeductions);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const inventoryRefsToUpdate: { ref: any, deduction: number }[] = [];
@@ -420,26 +455,25 @@ export default function POSLayout() {
           const data = docSnap.data();
           if (addOnDeductions[data.name]) {
             inventoryRefsToUpdate.push({
-              ref: docSnap.ref, // Ito na yung totoong random ID (e.g., 2ZTrBRm...)
+              ref: docSnap.ref,
               deduction: addOnDeductions[data.name]
             });
           }
         });
       }
 
-      // 3. I-save ang order at bawasan ang inventory nang sabay gamit ang Transaction
       await runTransaction(db, async (transaction) => {
-        // Operation 1: Save order document
         const orderDocRef = doc(collection(db, "orders"));
         transaction.set(orderDocRef, {
+          transactionNumber,
           items: sanitizedItems,
           totalAmount: total,
+          discount: discount !== "None" ? { type: discount, rate: 0.20, amount: discountAmount } : null,
           paymentMethod,
           cashierName: user?.displayName ?? "Unknown",
           createdAt: serverTimestamp(),
         });
 
-        // Operation 2: Bawasan ang inventory gamit yung tamang Document IDs
         inventoryRefsToUpdate.forEach(({ ref, deduction }) => {
           transaction.update(ref, {
             quantity: increment(-deduction)
@@ -447,7 +481,11 @@ export default function POSLayout() {
         });
       });
 
+      setLastTransaction({ number: transactionNumber, method: paymentMethod, total, discountAmount, amountTendered });
       setOrderItems([]);
+      setDiscount("None");
+      setAmountTendered("");
+      setCashModal(false);
       setCheckoutMessage(null);
       setIsSuccessModalOpen(true);
     } catch (error) {
@@ -634,7 +672,7 @@ export default function POSLayout() {
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
                     <p className="font-semibold text-sm" style={{ color: "#3b2212" }}>
-                      {item.name} <span style={{ color: "#a07850" }}>x{item.quantity}</span>
+                      {item.name}
                     </p>
                     {item.category && !item.category.includes("Food & Bites") && (
                       <p className="text-xs mt-0.5 font-medium" style={{ color: "#3b2212", opacity: 0.5 }}>
@@ -651,10 +689,66 @@ export default function POSLayout() {
                     )}
                   </div>
                   <div className="flex flex-col items-end gap-1 ml-2">
-                    <p className="font-normal text-sm" style={{ color: "#3b2212" }}>₱{item.price.toFixed(0)}</p>
+                    <p className="font-normal text-sm" style={{ color: "#3b2212" }}>
+                      ₱{(item.price * item.quantity).toFixed(0)}
+                    </p>
+                    {/* Quantity Controls */}
+                    <div className="flex items-center gap-1 mt-1">
+                      <button
+                        onClick={() => handleDecreaseQty(index)}
+                        className="w-6 h-6 rounded-full flex items-center justify-center font-bold"
+                        style={{ background: "#f0e8e0", color: "#3b2212", fontSize: "16px", lineHeight: 1 }}>
+                        −
+                      </button>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={qtyInputs[index] !== undefined ? qtyInputs[index] : String(item.quantity)}
+                        onChange={(e) => {
+                          const raw = e.target.value.replace(/[^0-9]/g, "");
+                          setQtyInputs(prev => ({ ...prev, [index]: raw }));
+                          const val = parseInt(raw);
+                          if (!isNaN(val) && val >= 1) {
+                            setOrderItems(orderItems.map((o, i) =>
+                              i === index ? { ...o, quantity: val } : o
+                            ));
+                          }
+                        }}
+                        onBlur={() => {
+                          const raw = qtyInputs[index];
+                          const val = parseInt(raw);
+                          if (!raw || isNaN(val) || val < 1) {
+                            setOrderItems(orderItems.map((o, i) =>
+                              i === index ? { ...o, quantity: 1 } : o
+                            ));
+                          }
+                          setQtyInputs(prev => {
+                            const next = { ...prev };
+                            delete next[index];
+                            return next;
+                          });
+                        }}
+                        className="text-sm font-semibold text-center outline-none rounded-lg"
+                        style={{
+                          width: "40px",
+                          color: "#3b2212",
+                          background: "#faf7f4",
+                          border: "1.5px solid #e8ddd4",
+                          padding: "2px 4px",
+                        }}
+                      />
+                      <button
+                        onClick={() => handleIncreaseQty(index)}
+                        className="w-6 h-6 rounded-full flex items-center justify-center font-bold"
+                        style={{ background: "#3b2212", color: "white", fontSize: "16px", lineHeight: 1 }}>
+                        +
+                      </button>
+                    </div>
                     <button onClick={() => handleRemoveItem(index)}
-                      className="text-xs rounded-full w-5 h-5 flex items-center justify-center"
-                      style={{ background: "#f0e8e0", color: "#a07850" }}>x</button>
+                      className="text-xs rounded-full w-5 h-5 flex items-center justify-center mt-1"
+                      style={{ background: "#fee2e2", color: "#c0392b" }}>
+                      x
+                    </button>
                   </div>
                 </div>
               </div>
@@ -664,12 +758,32 @@ export default function POSLayout() {
 
         {orderItems.length > 0 && (
           <div className="py-4 space-y-2 mt-2" style={{ borderTop: "1.5px solid #e8ddd4" }}>
+            {/* Discount Selector */}
+            <div className="mb-1">
+              <p className="text-xs mb-1.5" style={{ color: "#a07850" }}>Discount</p>
+              <div className="flex gap-2">
+                {(["None", "PWD", "Senior"] as const).map((d) => (
+                  <button key={d} onClick={() => setDiscount(d)}
+                    className="flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                    style={discount === d
+                      ? { background: "#3b2212", color: "white" }
+                      : { background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
+                    {d === "None" ? "None" : `${d} (20%)`} 
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="flex justify-between text-sm" style={{ color: "#a07850" }}>
               <span>Subtotal</span><span>₱{subtotal.toFixed(0)}</span>
             </div>
-            <div className="flex justify-between text-sm" style={{ color: "#a07850" }}>
-              <span>Tax (8%)</span><span>₱{tax.toFixed(2)}</span>
-            </div>
+            {discount !== "None" && (
+  <>
+    <div className="flex justify-between text-sm" style={{ color: "#2d7a38" }}>
+      <span>{discount} Discount (20%)</span>
+      <span>− ₱{discountAmount.toFixed(2)}</span>
+    </div>
+  </>
+)}
             <div className="flex justify-between font-normal text-base" style={{ color: "#3b2212" }}>
               <span>Total</span><span>₱{total.toFixed(2)}</span>
             </div>
@@ -678,7 +792,7 @@ export default function POSLayout() {
 
         <div className="space-y-2 mt-2">
           <button disabled={orderItems.length === 0}
-            onClick={() => processCheckout("Cash")}
+            onClick={() => { if (orderItems.length > 0) setConfirmModal({ open: true, method: "Cash" }); }}
             className="w-full py-4 rounded-xl font-normal transition-all"
             style={{ fontSize: "15px", ...(orderItems.length === 0
               ? { background: "#e8e0d8", color: "#b09070", cursor: "not-allowed" }
@@ -686,7 +800,7 @@ export default function POSLayout() {
             Cash {orderItems.length > 0 && `— ₱${total.toFixed(2)}`}
           </button>
           <button disabled={orderItems.length === 0}
-            onClick={() => processCheckout("GCash")}
+            onClick={() => { if (orderItems.length > 0) setConfirmModal({ open: true, method: "GCash" }); }}
             className="w-full py-4 rounded-xl font-normal transition-all"
             style={{ fontSize: "15px", ...(orderItems.length === 0
               ? { background: "#e8e0d8", color: "#b09070", cursor: "not-allowed" }
@@ -701,14 +815,167 @@ export default function POSLayout() {
         )}
       </div>
 
+      {/* Confirmation Modal */}
+      {confirmModal.open && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-50">
+          <div className="bg-white rounded-3xl p-14 shadow-2xl mx-6 w-full max-w-2xl">
+            <h2 className="text-4xl font-bold mb-3" style={{ color: "#3b2212" }}>Confirm Order</h2>
+            <p className="text-xl mb-8" style={{ color: "#a07850" }}>
+              Payment via <strong style={{ color: "#3b2212" }}>{confirmModal.method}</strong>
+            </p>
+            <div className="rounded-2xl p-7 mb-8" style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4" }}>
+              <div className="flex justify-between items-center">
+                <span className="text-xl" style={{ color: "#a07850" }}>Total Amount</span>
+                <span className="font-bold text-4xl" style={{ color: "#3b2212" }}>₱{total.toFixed(2)}</span>
+              </div>
+            </div>
+            <div className="flex gap-5">
+              <button
+                onClick={() => setConfirmModal({ open: false, method: null })}
+                className="flex-1 py-5 rounded-2xl font-bold text-xl"
+                style={{ background: "#f0e8e0", color: "#3b2212" }}>
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setConfirmModal({ open: false, method: null });
+                  if (confirmModal.method === "Cash") {
+                    setCashModal(true);
+                  } else if (confirmModal.method === "GCash") {
+                    processCheckout("GCash");
+                  }
+                }}
+                className="flex-1 py-5 rounded-2xl font-bold text-xl text-white"
+                style={{ background: confirmModal.method === "Cash" ? "#3b2212" : "#0070ba" }}>
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cash Tendered Modal */}
+      {cashModal && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-50">
+          <div className="bg-white rounded-3xl p-9 shadow-2xl mx-6 w-full max-w-xl">
+            <h2 className="text-2xl font-bold mb-3" style={{ color: "#3b2212" }}>Cash Payment</h2>
+            <div className="rounded-2xl p-4 mb-4" style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4" }}>
+              <div className="flex justify-between items-center">
+                <span className="text-base" style={{ color: "#a07850" }}>Total Due</span>
+                <span className="font-bold text-2xl" style={{ color: "#3b2212" }}>₱{total.toFixed(2)}</span>
+              </div>
+            </div>
+            {/* Amount Display */}
+            <div className="rounded-2xl px-5 py-3 mb-3 text-right" style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", minHeight: "60px" }}>
+              <p className="text-xs mb-1" style={{ color: "#a07850" }}>Amount Received</p>
+              <p className="font-bold" style={{ color: amountTendered ? "#3b2212" : "#c0b090", fontSize: "2rem", lineHeight: 1 }}>
+                {amountTendered ? `₱${amountTendered}` : "₱0"}
+              </p>
+            </div>
+            {/* Calculator Numpad */}
+            <div className="grid grid-cols-3 gap-2 mb-4">
+              {["7","8","9","4","5","6","1","2","3"].map((num) => (
+                <button
+                  key={num}
+                  onClick={() => setAmountTendered(prev => prev === "0" ? num : prev + num)}
+                  className="py-4 rounded-2xl font-bold text-xl transition-all active:scale-95"
+                  style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
+                  {num}
+                </button>
+              ))}
+              <button
+                onClick={() => setAmountTendered(prev => prev.endsWith(".") ? prev : prev.includes(".") ? prev : prev + ".")}
+                className="py-5 rounded-2xl font-bold text-2xl transition-all active:scale-95"
+                style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
+                .
+              </button>
+              <button
+                onClick={() => setAmountTendered(prev => prev === "0" ? "0" : prev + "0")}
+                className="py-5 rounded-2xl font-bold text-2xl transition-all active:scale-95"
+                style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
+                0
+              </button>
+              <button
+                onClick={() => setAmountTendered(prev => prev.length <= 1 ? "" : prev.slice(0, -1))}
+                className="py-5 rounded-2xl font-bold text-2xl transition-all active:scale-95"
+                style={{ background: "#fee2e2", color: "#c0392b", border: "1.5px solid #f5c6c6" }}>
+                ⌫
+              </button>
+            </div>
+
+            {amountTendered && parseFloat(amountTendered) >= total && (
+              <div className="rounded-2xl p-4 mb-4" style={{ background: "#f0faf0", border: "1.5px solid #b6e2b6" }}>
+                <div className="flex justify-between items-center">
+                  <span className="text-lg font-semibold" style={{ color: "#2d7a38" }}>Change</span>
+                  <strong className="text-3xl" style={{ color: "#2d7a38" }}>₱{(parseFloat(amountTendered) - total).toFixed(2)}</strong>
+                </div>
+              </div>
+            )}
+            {amountTendered && parseFloat(amountTendered) < total && (
+              <div className="rounded-2xl p-3 mb-4" style={{ background: "#fff0f0", border: "1.5px solid #f5c6c6" }}>
+                <span className="text-lg font-semibold" style={{ color: "#c0392b" }}>Insufficient amount</span>
+              </div>
+            )}
+            <div className="flex gap-5">
+              <button
+                onClick={() => { setCashModal(false); setAmountTendered(""); }}
+                className="flex-1 py-4 rounded-2xl font-bold text-lg"
+                style={{ background: "#f0e8e0", color: "#3b2212" }}>
+                Cancel
+              </button>
+              <button
+                disabled={!amountTendered || parseFloat(amountTendered) < total}
+                onClick={() => processCheckout("Cash")}
+                className="flex-1 py-4 rounded-2xl font-bold text-lg"
+                style={{
+                  background: !amountTendered || parseFloat(amountTendered) < total ? "#e8e0d8" : "#3b2212",
+                  color: !amountTendered || parseFloat(amountTendered) < total ? "#b09070" : "white",
+                  cursor: !amountTendered || parseFloat(amountTendered) < total ? "not-allowed" : "pointer",
+                }}>
+                Confirm Cash
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success Modal */}
       {isSuccessModalOpen && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-50">
-          <div className="bg-white rounded-2xl p-8 shadow-xl text-center mx-4 max-w-lg w-full">
-            <h2 className="text-2xl font-bold mb-3" style={{ color: "#3b2212" }}>Order Completed Successfully!</h2>
+          <div className="bg-white rounded-3xl p-14 shadow-2xl text-center mx-6 w-full max-w-2xl">
+            <h2 className="text-4xl font-bold mb-8" style={{ color: "#3b2212" }}>Order Completed!</h2>
+            {lastTransaction && (
+              <div className="rounded-2xl p-8 mb-8 text-left space-y-5" style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4" }}>
+                <div className="flex justify-between items-center">
+                  <span className="text-lg" style={{ color: "#a07850" }}>Transaction No.</span>
+                  <span className="font-bold text-lg" style={{ color: "#3b2212" }}>{lastTransaction.number}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-lg" style={{ color: "#a07850" }}>Payment Method</span>
+                  <span className="font-bold text-lg" style={{ color: "#3b2212" }}>{lastTransaction.method}</span>
+                </div>
+                <div className="flex justify-between items-center" style={{ borderTop: "1.5px solid #e8ddd4", paddingTop: "16px" }}>
+                  <span className="text-lg" style={{ color: "#a07850" }}>Total Paid</span>
+                  <span className="font-bold text-3xl" style={{ color: "#3b2212" }}>₱{lastTransaction.total.toFixed(2)}</span>
+                </div>
+                {lastTransaction.method === "Cash" && lastTransaction.amountTendered && (
+                  <>
+                    <div className="flex justify-between items-center">
+                      <span className="text-lg" style={{ color: "#a07850" }}>Amount Received</span>
+                      <span className="font-bold text-xl" style={{ color: "#3b2212" }}>₱{parseFloat(lastTransaction.amountTendered).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between items-center rounded-2xl p-5" style={{ background: "#f0faf0" }}>
+                      <span className="text-xl font-semibold" style={{ color: "#2d7a38" }}>Change</span>
+                      <span className="font-bold text-3xl" style={{ color: "#2d7a38" }}>₱{(parseFloat(lastTransaction.amountTendered) - lastTransaction.total).toFixed(2)}</span>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
             <button
               onClick={() => setIsSuccessModalOpen(false)}
-              className="px-6 py-3 rounded-lg text-white font-semibold"
-              style={{ background: "#4a3b32" }}>
+              className="px-6 py-5 rounded-2xl text-white font-bold text-xl w-full"
+              style={{ background: "#3b2212" }}>
               Make another order
             </button>
           </div>
