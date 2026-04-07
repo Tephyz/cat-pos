@@ -104,12 +104,6 @@ export default function SigninPage() {
             </button>
           </form>
 
-          <p className="text-sm text-gray-500 mt-4">
-            Don't have an account?{" "}
-            <Link href="/signup" className="underline">
-              Signup
-            </Link>
-          </p>
         </div>
       </div>
     </div>

@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
-// UPDATE: Idinagdag na natin dito ang query, where, at getDocs
 import { collection, addDoc, serverTimestamp, runTransaction, doc, increment, query, where, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
@@ -27,9 +26,9 @@ export default function POSLayout() {
     if (!loading && !user) router.push("/");
   }, [user, loading, router]);
 
-  const handleLogout = async () => { 
-    await logout(); 
-    router.push("/"); 
+  const handleLogout = async () => {
+    await logout();
+    router.push("/");
   };
 
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -56,9 +55,22 @@ export default function POSLayout() {
   const [discount, setDiscount] = useState<"None" | "PWD" | "Senior">("None");
   const [confirmModal, setConfirmModal] = useState<{ open: boolean; method: "Cash" | "GCash" | null }>({ open: false, method: null });
   const [cashModal, setCashModal] = useState(false);
+  const [gcashRefModal, setGcashRefModal] = useState(false);
+  const [gcashRefNumber, setGcashRefNumber] = useState("");
   const [amountTendered, setAmountTendered] = useState("");
-  const [lastTransaction, setLastTransaction] = useState<{ number: string; method: string; total: number; discountAmount: number; amountTendered: string } | null>(null);
+  const [lastTransaction, setLastTransaction] = useState<{ number: string; method: string; total: number; discountAmount: number; amountTendered: string; gcashRef?: string } | null>(null);
   const [qtyInputs, setQtyInputs] = useState<Record<number, string>>({});
+
+  // Discount modal state
+  const [discountModal, setDiscountModal] = useState(false);
+  const [pendingDiscount, setPendingDiscount] = useState<"PWD" | "Senior" | null>(null);
+  const [discountCustomerName, setDiscountCustomerName] = useState("");
+  const [discountCustomerID, setDiscountCustomerID] = useState("");
+  
+  // Keyboard states for discount modal
+  const [activeInput, setActiveInput] = useState<"name" | "id" | null>(null);
+  const [tempName, setTempName] = useState("");
+  const [tempID, setTempID] = useState("");
 
   if (loading) return <div>Loading...</div>;
   if (!user) return <div>Redirecting to login...</div>;
@@ -372,22 +384,22 @@ export default function POSLayout() {
     setSelectedAddOns(prev => prev.includes(addOn) ? prev.filter(i => i !== addOn) : [...prev, addOn]);
   };
   const handleClearAddOns = () => setSelectedAddOns([]);
-        
+
   const subtotal = orderItems.reduce(
-  (acc, item) => acc + item.price * item.quantity,
-  0
-);
+    (acc, item) => acc + item.price * item.quantity,
+    0
+  );
 
-let discountAmount = 0;
-let total = subtotal;
+  let discountAmount = 0;
+  let total = subtotal;
 
-if (discount === "PWD" || discount === "Senior") {
-  discountAmount = subtotal * 0.20;
-  total = subtotal - discountAmount;
-}
+  if (discount === "PWD" || discount === "Senior") {
+    discountAmount = subtotal * 0.20;
+    total = subtotal - discountAmount;
+  }
 
-discountAmount = +discountAmount.toFixed(2);
-total = +total.toFixed(2);
+  discountAmount = +discountAmount.toFixed(2);
+  total = +total.toFixed(2);
 
   const generateTransactionNumber = () => {
     const now = new Date();
@@ -396,7 +408,7 @@ total = +total.toFixed(2);
     return `TXN-${date}-${seq}`;
   };
 
-  const processCheckout = async (paymentMethod: "Cash" | "GCash") => {
+  const processCheckout = async (paymentMethod: "Cash" | "GCash", refNumber?: string) => {
     if (orderItems.length === 0) {
       setCheckoutMessage("No items in the cart to checkout.");
       return;
@@ -415,15 +427,12 @@ total = +total.toFixed(2);
           quantity: item.quantity,
           price: item.price,
         };
-
         if (Array.isArray(item.addOns) && item.addOns.length > 0) {
           cleaned.addOns = item.addOns;
         }
-
         if (typeof item.variant !== "undefined") {
           cleaned.variant = item.variant;
         }
-
         return cleaned;
       });
 
@@ -450,7 +459,6 @@ total = +total.toFixed(2);
       if (addOnNames.length > 0) {
         const q = query(collection(db, "inventory"), where("name", "in", addOnNames));
         const querySnapshot = await getDocs(q);
-
         querySnapshot.forEach((docSnap) => {
           const data = docSnap.data();
           if (addOnDeductions[data.name]) {
@@ -468,26 +476,43 @@ total = +total.toFixed(2);
           transactionNumber,
           items: sanitizedItems,
           totalAmount: total,
-          discount: discount !== "None" ? { type: discount, rate: 0.20, amount: discountAmount } : null,
+          discount: discount !== "None"
+            ? {
+                type: discount,
+                rate: 0.20,
+                amount: discountAmount,
+                customerName: discountCustomerName,
+                customerID: discountCustomerID,
+              }
+            : null,
           paymentMethod,
+          gcashRefNumber: paymentMethod === "GCash" ? (refNumber ?? null) : null,
           cashierName: user?.displayName ?? "Unknown",
           createdAt: serverTimestamp(),
         });
-
         inventoryRefsToUpdate.forEach(({ ref, deduction }) => {
-          transaction.update(ref, {
-            quantity: increment(-deduction)
-          });
+          transaction.update(ref, { quantity: increment(-deduction) });
         });
       });
 
-      setLastTransaction({ number: transactionNumber, method: paymentMethod, total, discountAmount, amountTendered });
+      setLastTransaction({
+        number: transactionNumber,
+        method: paymentMethod,
+        total,
+        discountAmount,
+        amountTendered,
+        gcashRef: paymentMethod === "GCash" ? refNumber : undefined,
+      });
       setOrderItems([]);
       setDiscount("None");
       setAmountTendered("");
       setCashModal(false);
+      setGcashRefModal(false);
+      setGcashRefNumber("");
       setCheckoutMessage(null);
       setIsSuccessModalOpen(true);
+      setDiscountCustomerName("");
+      setDiscountCustomerID("");
     } catch (error) {
       console.error("Checkout failed:", error);
       setCheckoutMessage("Checkout failed. Please try again.");
@@ -503,6 +528,60 @@ total = +total.toFixed(2);
     setSelectedProduct(item);
     setSelectedProductIsFood(checkIsFood(item));
     setSelectedProductCategory(getCategoryLabel(item));
+  };
+
+  // Keyboard handlers for discount modal
+  const handleKeyPress = (key: string) => {
+    if (activeInput === "name") {
+      if (key === "BACKSPACE") {
+        setTempName(prev => prev.slice(0, -1));
+      } else if (key === "SPACE") {
+        setTempName(prev => prev + " ");
+      } else if (key === "CLEAR") {
+        setTempName("");
+      } else {
+        setTempName(prev => prev + key);
+      }
+    } else if (activeInput === "id") {
+      if (key === "BACKSPACE") {
+        setTempID(prev => prev.slice(0, -1));
+      } else if (key === "CLEAR") {
+        setTempID("");
+      } else if (/^[0-9]$/.test(key)) {
+        setTempID(prev => prev + key);
+      }
+    }
+  };
+
+  const openDiscountModal = (discountType: "PWD" | "Senior") => {
+    setPendingDiscount(discountType);
+    setDiscountModal(true);
+    setTempName(discountCustomerName);
+    setTempID(discountCustomerID);
+    setActiveInput(null);
+  };
+
+  const applyDiscount = () => {
+    if (tempName.trim() && tempID.trim()) {
+      setDiscountCustomerName(tempName);
+      setDiscountCustomerID(tempID);
+      if (pendingDiscount) setDiscount(pendingDiscount);
+      setDiscountModal(false);
+      setPendingDiscount(null);
+      setActiveInput(null);
+    }
+  };
+
+  const cancelDiscount = () => {
+    setDiscountModal(false);
+    setPendingDiscount(null);
+    setActiveInput(null);
+    if (discount === "None") {
+      setDiscountCustomerName("");
+      setDiscountCustomerID("");
+      setTempName("");
+      setTempID("");
+    }
   };
 
   return (
@@ -649,6 +728,7 @@ total = +total.toFixed(2);
         )}
       </div>
 
+      {/* Order Panel */}
       <div className="w-96 flex flex-col h-screen sticky top-0 p-5"
         style={{ background: "white", borderLeft: "1.5px solid #e8ddd4" }}>
         <div className="flex justify-between items-center mb-5">
@@ -671,13 +751,9 @@ total = +total.toFixed(2);
                 style={{ borderBottom: "0.5px solid #e8ddd4" }}>
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
-                    <p className="font-semibold text-sm" style={{ color: "#3b2212" }}>
-                      {item.name}
-                    </p>
+                    <p className="font-semibold text-sm" style={{ color: "#3b2212" }}>{item.name}</p>
                     {item.category && !item.category.includes("Food & Bites") && (
-                      <p className="text-xs mt-0.5 font-medium" style={{ color: "#3b2212", opacity: 0.5 }}>
-                        {item.category}
-                      </p>
+                      <p className="text-xs mt-0.5 font-medium" style={{ color: "#3b2212", opacity: 0.5 }}>{item.category}</p>
                     )}
                     {(item.temperature || item.size || item.sugar) && (
                       <p className="text-xs mt-0.5" style={{ color: "#a07850" }}>
@@ -689,17 +765,11 @@ total = +total.toFixed(2);
                     )}
                   </div>
                   <div className="flex flex-col items-end gap-1 ml-2">
-                    <p className="font-normal text-sm" style={{ color: "#3b2212" }}>
-                      ₱{(item.price * item.quantity).toFixed(0)}
-                    </p>
-                    {/* Quantity Controls */}
+                    <p className="font-normal text-sm" style={{ color: "#3b2212" }}>₱{(item.price * item.quantity).toFixed(0)}</p>
                     <div className="flex items-center gap-1 mt-1">
-                      <button
-                        onClick={() => handleDecreaseQty(index)}
+                      <button onClick={() => handleDecreaseQty(index)}
                         className="w-6 h-6 rounded-full flex items-center justify-center font-bold"
-                        style={{ background: "#f0e8e0", color: "#3b2212", fontSize: "16px", lineHeight: 1 }}>
-                        −
-                      </button>
+                        style={{ background: "#f0e8e0", color: "#3b2212", fontSize: "16px", lineHeight: 1 }}>−</button>
                       <input
                         type="text"
                         inputMode="numeric"
@@ -709,46 +779,27 @@ total = +total.toFixed(2);
                           setQtyInputs(prev => ({ ...prev, [index]: raw }));
                           const val = parseInt(raw);
                           if (!isNaN(val) && val >= 1) {
-                            setOrderItems(orderItems.map((o, i) =>
-                              i === index ? { ...o, quantity: val } : o
-                            ));
+                            setOrderItems(orderItems.map((o, i) => i === index ? { ...o, quantity: val } : o));
                           }
                         }}
                         onBlur={() => {
                           const raw = qtyInputs[index];
                           const val = parseInt(raw);
                           if (!raw || isNaN(val) || val < 1) {
-                            setOrderItems(orderItems.map((o, i) =>
-                              i === index ? { ...o, quantity: 1 } : o
-                            ));
+                            setOrderItems(orderItems.map((o, i) => i === index ? { ...o, quantity: 1 } : o));
                           }
-                          setQtyInputs(prev => {
-                            const next = { ...prev };
-                            delete next[index];
-                            return next;
-                          });
+                          setQtyInputs(prev => { const next = { ...prev }; delete next[index]; return next; });
                         }}
                         className="text-sm font-semibold text-center outline-none rounded-lg"
-                        style={{
-                          width: "40px",
-                          color: "#3b2212",
-                          background: "#faf7f4",
-                          border: "1.5px solid #e8ddd4",
-                          padding: "2px 4px",
-                        }}
+                        style={{ width: "40px", color: "#3b2212", background: "#faf7f4", border: "1.5px solid #e8ddd4", padding: "2px 4px" }}
                       />
-                      <button
-                        onClick={() => handleIncreaseQty(index)}
+                      <button onClick={() => handleIncreaseQty(index)}
                         className="w-6 h-6 rounded-full flex items-center justify-center font-bold"
-                        style={{ background: "#3b2212", color: "white", fontSize: "16px", lineHeight: 1 }}>
-                        +
-                      </button>
+                        style={{ background: "#3b2212", color: "white", fontSize: "16px", lineHeight: 1 }}>+</button>
                     </div>
                     <button onClick={() => handleRemoveItem(index)}
                       className="text-xs rounded-full w-5 h-5 flex items-center justify-center mt-1"
-                      style={{ background: "#fee2e2", color: "#c0392b" }}>
-                      x
-                    </button>
+                      style={{ background: "#fee2e2", color: "#c0392b" }}>x</button>
                   </div>
                 </div>
               </div>
@@ -758,32 +809,60 @@ total = +total.toFixed(2);
 
         {orderItems.length > 0 && (
           <div className="py-4 space-y-2 mt-2" style={{ borderTop: "1.5px solid #e8ddd4" }}>
-            {/* Discount Selector */}
             <div className="mb-1">
               <p className="text-xs mb-1.5" style={{ color: "#a07850" }}>Discount</p>
               <div className="flex gap-2">
                 {(["None", "PWD", "Senior"] as const).map((d) => (
-                  <button key={d} onClick={() => setDiscount(d)}
+                  <button key={d}
+                    onClick={() => {
+                      if (d === "None") {
+                        setDiscount("None");
+                        setDiscountCustomerName("");
+                        setDiscountCustomerID("");
+                      } else {
+                        openDiscountModal(d);
+                      }
+                    }}
                     className="flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all"
                     style={discount === d
                       ? { background: "#3b2212", color: "white" }
                       : { background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
-                    {d === "None" ? "None" : `${d} (20%)`} 
+                    {d === "None" ? "None" : `${d} (20%)`}
                   </button>
                 ))}
               </div>
+              {/* Show customer info if discount is applied */}
+              {discount !== "None" && discountCustomerName && (
+                <div className="mt-2 px-3 py-2 rounded-xl text-xs flex items-center justify-between"
+                  style={{ background: "#f0faf0", border: "1.5px solid #b6e2b6" }}>
+                  <div>
+                    <p className="font-semibold" style={{ color: "#2d7a38" }}>{discountCustomerName}</p>
+                    <p style={{ color: "#5a8a5a" }}>ID: {discountCustomerID}</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setPendingDiscount(discount);
+                      setDiscountModal(true);
+                      setTempName(discountCustomerName);
+                      setTempID(discountCustomerID);
+                      setActiveInput(null);
+                    }}
+                    className="text-xs underline ml-2"
+                    style={{ color: "#2d7a38" }}>
+                    Edit
+                  </button>
+                </div>
+              )}
             </div>
             <div className="flex justify-between text-sm" style={{ color: "#a07850" }}>
               <span>Subtotal</span><span>₱{subtotal.toFixed(0)}</span>
             </div>
             {discount !== "None" && (
-  <>
-    <div className="flex justify-between text-sm" style={{ color: "#2d7a38" }}>
-      <span>{discount} Discount (20%)</span>
-      <span>− ₱{discountAmount.toFixed(2)}</span>
-    </div>
-  </>
-)}
+              <div className="flex justify-between text-sm" style={{ color: "#2d7a38" }}>
+                <span>{discount} Discount (20%)</span>
+                <span>− ₱{discountAmount.toFixed(2)}</span>
+              </div>
+            )}
             <div className="flex justify-between font-normal text-base" style={{ color: "#3b2212" }}>
               <span>Total</span><span>₱{total.toFixed(2)}</span>
             </div>
@@ -815,6 +894,203 @@ total = +total.toFixed(2);
         )}
       </div>
 
+      {/* Discount Info Modal with Touch Keyboard - No Preview Section */}
+      {discountModal && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-50 p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xl" style={{ overflow: "visible" }}>
+            <div className="p-6" style={{ overflow: "visible" }}>
+              {/* Header */}
+              <div className="mb-4">
+                <h2 className="text-2xl font-bold" style={{ color: "#3b2212" }}>
+                  {pendingDiscount} Discount
+                </h2>
+                <p className="text-sm" style={{ color: "#a07850" }}>20% off the total bill</p>
+              </div>
+
+              <p className="text-sm mb-4" style={{ color: "#a07850" }}>
+                Tap on an input field to use the keyboard
+              </p>
+
+              {/* Input Fields */}
+              <div className="space-y-4 mb-4">
+                {/* Customer Name */}
+                <div>
+                  <label className="text-sm font-semibold block mb-1.5" style={{ color: "#3b2212" }}>
+                    Customer Name <span style={{ color: "#c0392b" }}>*</span>
+                  </label>
+                  <div
+                    onClick={() => setActiveInput("name")}
+                    className="w-full rounded-xl px-4 py-3 text-base transition-all cursor-pointer"
+                    style={{
+                      background: "#faf7f4",
+                      border: activeInput === "name" ? "2px solid #3b2212" : "1.5px solid #e8ddd4",
+                      color: "#3b2212",
+                      minHeight: "52px",
+                    }}
+                  >
+                    {tempName || <span style={{ color: "#c0b090" }}>Tap to enter name...</span>}
+                  </div>
+                </div>
+
+                {/* ID Number */}
+                <div>
+                  <label className="text-sm font-semibold block mb-1.5" style={{ color: "#3b2212" }}>
+                    ID Number <span style={{ color: "#c0392b" }}>*</span>
+                  </label>
+                  <div
+                    onClick={() => setActiveInput("id")}
+                    className="w-full rounded-xl px-4 py-3 text-base transition-all cursor-pointer font-mono"
+                    style={{
+                      background: "#faf7f4",
+                      border: activeInput === "id" ? "2px solid #3b2212" : "1.5px solid #e8ddd4",
+                      color: "#3b2212",
+                      minHeight: "52px",
+                    }}
+                  >
+                    {tempID || <span style={{ color: "#c0b090" }}>Tap to enter ID number...</span>}
+                  </div>
+                </div>
+              </div>
+
+              {/* Touch Keyboard */}
+              {activeInput && (
+                <div className="mt-4 pt-4 border-t" style={{ borderColor: "#e8ddd4" }}>
+                  <div className="flex justify-between items-center mb-3">
+                    <p className="text-sm font-semibold" style={{ color: "#3b2212" }}>
+                      Enter {activeInput === "name" ? "Name" : "ID Number"}
+                    </p>
+    
+                  </div>
+                  
+                  {activeInput === "name" ? (
+                    // Alphabetical keyboard for name
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-10 gap-1.5">
+                        {["Q","W","E","R","T","Y","U","I","O","P"].map((key) => (
+                          <button
+                            key={key}
+                            onClick={() => handleKeyPress(key)}
+                            className="py-2.5 rounded-lg font-semibold text-base transition-all active:scale-95"
+                            style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}
+                          >
+                            {key}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="grid grid-cols-9 gap-1.5">
+                        {["A","S","D","F","G","H","J","K","L"].map((key) => (
+                          <button
+                            key={key}
+                            onClick={() => handleKeyPress(key)}
+                            className="py-2.5 rounded-lg font-semibold text-base transition-all active:scale-95"
+                            style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}
+                          >
+                            {key}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="grid grid-cols-9 gap-1.5">
+                        {["Z","X","C","V","B","N","M"].map((key) => (
+                          <button
+                            key={key}
+                            onClick={() => handleKeyPress(key)}
+                            className="py-2.5 rounded-lg font-semibold text-base transition-all active:scale-95"
+                            style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}
+                          >
+                            {key}
+                          </button>
+                        ))}
+                        <button
+                          onClick={() => handleKeyPress("SPACE")}
+                          className="py-2.5 rounded-lg font-semibold text-sm transition-all active:scale-95 col-span-2"
+                          style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}
+                        >
+                          SPACE
+                        </button>
+                        <button
+                          onClick={() => handleKeyPress("BACKSPACE")}
+                          className="py-2.5 rounded-lg font-semibold text-base transition-all active:scale-95"
+                          style={{ background: "#fee2e2", color: "#c0392b", border: "1px solid #f5c6c6" }}
+                        >
+                          ⌫
+                        </button>
+                        <button
+                          onClick={() => handleKeyPress("CLEAR")}
+                          className="py-2.5 rounded-lg font-semibold text-sm transition-all active:scale-95"
+                          style={{ background: "#fff0f0", color: "#c0392b", border: "1px solid #f5c6c6" }}
+                        >
+                          CLEAR
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    // Numeric keyboard for ID
+                    <div>
+                      <div className="grid grid-cols-3 gap-2 mb-2">
+                        {["1","2","3","4","5","6","7","8","9"].map((num) => (
+                          <button
+                            key={num}
+                            onClick={() => handleKeyPress(num)}
+                            className="py-4 rounded-xl font-bold text-2xl transition-all active:scale-95"
+                            style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}
+                          >
+                            {num}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <button
+                          onClick={() => handleKeyPress("CLEAR")}
+                          className="py-4 rounded-xl font-bold text-base transition-all active:scale-95"
+                          style={{ background: "#fff0f0", color: "#c0392b", border: "1.5px solid #f5c6c6" }}
+                        >
+                          CLEAR
+                        </button>
+                        <button
+                          onClick={() => handleKeyPress("0")}
+                          className="py-4 rounded-xl font-bold text-2xl transition-all active:scale-95"
+                          style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}
+                        >
+                          0
+                        </button>
+                        <button
+                          onClick={() => handleKeyPress("BACKSPACE")}
+                          className="py-4 rounded-xl font-bold text-2xl transition-all active:scale-95"
+                          style={{ background: "#fee2e2", color: "#c0392b", border: "1.5px solid #f5c6c6" }}
+                        >
+                          ⌫
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="flex gap-4 mt-6">
+                <button
+                  onClick={cancelDiscount}
+                  className="flex-1 py-4 rounded-2xl font-bold text-lg"
+                  style={{ background: "#f0e8e0", color: "#3b2212" }}>
+                  Cancel
+                </button>
+                <button
+                  disabled={!tempName.trim() || !tempID.trim()}
+                  onClick={applyDiscount}
+                  className="flex-1 py-4 rounded-2xl font-bold text-lg transition-all"
+                  style={{
+                    background: !tempName.trim() || !tempID.trim() ? "#e8e0d8" : "#2d7a38",
+                    color: !tempName.trim() || !tempID.trim() ? "#b09070" : "white",
+                    cursor: !tempName.trim() || !tempID.trim() ? "not-allowed" : "pointer",
+                  }}>
+                  Apply Discount
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Confirmation Modal */}
       {confirmModal.open && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-50">
@@ -842,7 +1118,7 @@ total = +total.toFixed(2);
                   if (confirmModal.method === "Cash") {
                     setCashModal(true);
                   } else if (confirmModal.method === "GCash") {
-                    processCheckout("GCash");
+                    setGcashRefModal(true);
                   }
                 }}
                 className="flex-1 py-5 rounded-2xl font-bold text-xl text-white"
@@ -865,18 +1141,15 @@ total = +total.toFixed(2);
                 <span className="font-bold text-2xl" style={{ color: "#3b2212" }}>₱{total.toFixed(2)}</span>
               </div>
             </div>
-            {/* Amount Display */}
             <div className="rounded-2xl px-5 py-3 mb-3 text-right" style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", minHeight: "60px" }}>
               <p className="text-xs mb-1" style={{ color: "#a07850" }}>Amount Received</p>
               <p className="font-bold" style={{ color: amountTendered ? "#3b2212" : "#c0b090", fontSize: "2rem", lineHeight: 1 }}>
                 {amountTendered ? `₱${amountTendered}` : "₱0"}
               </p>
             </div>
-            {/* Calculator Numpad */}
             <div className="grid grid-cols-3 gap-2 mb-4">
               {["7","8","9","4","5","6","1","2","3"].map((num) => (
-                <button
-                  key={num}
+                <button key={num}
                   onClick={() => setAmountTendered(prev => prev === "0" ? num : prev + num)}
                   className="py-4 rounded-2xl font-bold text-xl transition-all active:scale-95"
                   style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
@@ -886,23 +1159,16 @@ total = +total.toFixed(2);
               <button
                 onClick={() => setAmountTendered(prev => prev.endsWith(".") ? prev : prev.includes(".") ? prev : prev + ".")}
                 className="py-5 rounded-2xl font-bold text-2xl transition-all active:scale-95"
-                style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
-                .
-              </button>
+                style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>.</button>
               <button
                 onClick={() => setAmountTendered(prev => prev === "0" ? "0" : prev + "0")}
                 className="py-5 rounded-2xl font-bold text-2xl transition-all active:scale-95"
-                style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
-                0
-              </button>
+                style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>0</button>
               <button
                 onClick={() => setAmountTendered(prev => prev.length <= 1 ? "" : prev.slice(0, -1))}
                 className="py-5 rounded-2xl font-bold text-2xl transition-all active:scale-95"
-                style={{ background: "#fee2e2", color: "#c0392b", border: "1.5px solid #f5c6c6" }}>
-                ⌫
-              </button>
+                style={{ background: "#fee2e2", color: "#c0392b", border: "1.5px solid #f5c6c6" }}>⌫</button>
             </div>
-
             {amountTendered && parseFloat(amountTendered) >= total && (
               <div className="rounded-2xl p-4 mb-4" style={{ background: "#f0faf0", border: "1.5px solid #b6e2b6" }}>
                 <div className="flex justify-between items-center">
@@ -920,9 +1186,7 @@ total = +total.toFixed(2);
               <button
                 onClick={() => { setCashModal(false); setAmountTendered(""); }}
                 className="flex-1 py-4 rounded-2xl font-bold text-lg"
-                style={{ background: "#f0e8e0", color: "#3b2212" }}>
-                Cancel
-              </button>
+                style={{ background: "#f0e8e0", color: "#3b2212" }}>Cancel</button>
               <button
                 disabled={!amountTendered || parseFloat(amountTendered) < total}
                 onClick={() => processCheckout("Cash")}
@@ -931,8 +1195,114 @@ total = +total.toFixed(2);
                   background: !amountTendered || parseFloat(amountTendered) < total ? "#e8e0d8" : "#3b2212",
                   color: !amountTendered || parseFloat(amountTendered) < total ? "#b09070" : "white",
                   cursor: !amountTendered || parseFloat(amountTendered) < total ? "not-allowed" : "pointer",
+                }}>Confirm Cash</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* GCash Reference Number Modal */}
+      {gcashRefModal && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-50">
+          <div className="bg-white rounded-3xl p-9 shadow-2xl mx-6 w-full max-w-xl">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg"
+                style={{ background: "#e8f4ff", color: "#0070ba" }}>G</div>
+              <h2 className="text-2xl font-bold" style={{ color: "#0070ba" }}>GCash Payment</h2>
+            </div>
+            <p className="text-sm mb-5" style={{ color: "#a07850" }}>
+              Enter the 13-digit reference number from the customer's GCash receipt.
+            </p>
+            <div className="rounded-2xl p-4 mb-5" style={{ background: "#f0f7ff", border: "1.5px solid #b3d9f7" }}>
+              <div className="flex justify-between items-center">
+                <span className="text-base" style={{ color: "#0070ba" }}>Total Due</span>
+                <span className="font-bold text-2xl" style={{ color: "#0070ba" }}>₱{total.toFixed(2)}</span>
+              </div>
+            </div>
+            <div className="rounded-2xl px-5 py-3 mb-3 text-center"
+              style={{
+                background: gcashRefNumber ? "#f0f7ff" : "#faf7f4",
+                border: gcashRefNumber.trim().length >= 13 ? "2px solid #0070ba" : "2px solid #e8ddd4",
+                minHeight: "70px",
+                transition: "border-color 0.2s",
+              }}>
+              <p className="text-xs mb-1" style={{ color: "#a07850" }}>Reference Number</p>
+              <p className="font-bold tracking-widest"
+                style={{
+                  color: gcashRefNumber ? "#0070ba" : "#c0b090",
+                  fontSize: "1.7rem",
+                  lineHeight: 1,
+                  letterSpacing: "0.15em",
                 }}>
-                Confirm Cash
+                {gcashRefNumber || "— — — — — — — — — — — — —"}
+              </p>
+            </div>
+            <div className="flex justify-between items-center mb-3">
+              <p className="text-xs" style={{ color: gcashRefNumber.trim().length >= 13 ? "#2d7a38" : "#c0b090" }}>
+                {gcashRefNumber.trim().length >= 13 ? "✓ Ready to confirm payment" : "Required 13 digits"}
+              </p>
+              <p className="text-xs font-semibold" style={{ color: gcashRefNumber.length >= 13 ? "#0070ba" : "#c0b090" }}>
+                {gcashRefNumber.length} / 13
+              </p>
+            </div>
+            <div className="grid grid-cols-3 gap-2 mb-4">
+              {["1","2","3","4","5","6","7","8","9"].map((num) => (
+                <button
+                  key={num}
+                  onClick={() => {
+                    if (gcashRefNumber.length < 13) {
+                      setGcashRefNumber(prev => prev + num);
+                    }
+                  }}
+                  className="py-4 rounded-2xl font-bold text-2xl transition-all active:scale-95"
+                  style={{ background: "#f0f7ff", color: "#0070ba", border: "1.5px solid #b3d9f7" }}>
+                  {num}
+                </button>
+              ))}
+              <button
+                onClick={() => setGcashRefNumber("")}
+                className="py-4 rounded-2xl font-bold text-sm transition-all active:scale-95"
+                style={{ background: "#fff0f0", color: "#c0392b", border: "1.5px solid #f5c6c6" }}>
+                CLR
+              </button>
+              <button
+                onClick={() => {
+                  if (gcashRefNumber.length < 13) {
+                    setGcashRefNumber(prev => prev + "0");
+                  }
+                }}
+                className="py-4 rounded-2xl font-bold text-2xl transition-all active:scale-95"
+                style={{ background: "#f0f7ff", color: "#0070ba", border: "1.5px solid #b3d9f7" }}>
+                0
+              </button>
+              <button
+                onClick={() => setGcashRefNumber(prev => prev.slice(0, -1))}
+                className="py-4 rounded-2xl font-bold text-2xl transition-all active:scale-95"
+                style={{ background: "#fee2e2", color: "#c0392b", border: "1.5px solid #f5c6c6" }}>
+                ⌫
+              </button>
+            </div>
+            <div className="flex gap-4">
+              <button
+                onClick={() => { setGcashRefModal(false); setGcashRefNumber(""); }}
+                className="flex-1 py-4 rounded-2xl font-bold text-lg"
+                style={{ background: "#f0e8e0", color: "#3b2212" }}>
+                Cancel
+              </button>
+              <button
+                disabled={gcashRefNumber.trim().length < 13}
+                onClick={() => {
+                  processCheckout("GCash", gcashRefNumber.trim());
+                  setGcashRefModal(false);
+                  setGcashRefNumber("");
+                }}
+                className="flex-1 py-4 rounded-2xl font-bold text-lg transition-all"
+                style={{
+                  background: gcashRefNumber.trim().length < 13 ? "#e8e0d8" : "#0070ba",
+                  color: gcashRefNumber.trim().length < 13 ? "#b09070" : "white",
+                  cursor: gcashRefNumber.trim().length < 13 ? "not-allowed" : "pointer",
+                }}>
+                Confirm GCash
               </button>
             </div>
           </div>
@@ -954,6 +1324,15 @@ total = +total.toFixed(2);
                   <span className="text-lg" style={{ color: "#a07850" }}>Payment Method</span>
                   <span className="font-bold text-lg" style={{ color: "#3b2212" }}>{lastTransaction.method}</span>
                 </div>
+                {lastTransaction.method === "GCash" && lastTransaction.gcashRef && (
+                  <div className="flex justify-between items-center rounded-2xl p-4"
+                    style={{ background: "#f0f7ff", border: "1.5px solid #b3d9f7" }}>
+                    <span className="text-lg" style={{ color: "#0070ba" }}>GCash Ref No.</span>
+                    <span className="font-bold text-lg tracking-widest" style={{ color: "#0070ba" }}>
+                      {lastTransaction.gcashRef}
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between items-center" style={{ borderTop: "1.5px solid #e8ddd4", paddingTop: "16px" }}>
                   <span className="text-lg" style={{ color: "#a07850" }}>Total Paid</span>
                   <span className="font-bold text-3xl" style={{ color: "#3b2212" }}>₱{lastTransaction.total.toFixed(2)}</span>
@@ -982,12 +1361,12 @@ total = +total.toFixed(2);
         </div>
       )}
 
+      {/* Product Modal */}
       {selectedProduct && (
         <div className="fixed inset-0 flex items-center justify-center z-50"
           style={{ background: "rgba(0,0,0,0.4)", backdropFilter: "blur(4px)" }}>
           <div className="rounded-2xl p-6 relative max-h-[90vh] overflow-y-auto"
             style={{ background: "white", border: "2px solid #e8ddd4", width: "fit-content", minWidth: "320px", maxWidth: "90vw" }}>
-
             <button
               className="absolute top-4 right-4 w-8 h-8 rounded-full flex items-center justify-center text-sm"
               style={{ background: "#f7f3ef", color: "#3b2212", border: "1px solid #e8ddd4" }}
@@ -997,13 +1376,9 @@ total = +total.toFixed(2);
                 setSelectedVariant(null);
                 setSelectedProductIsFood(false);
                 setSelectedProductCategory("");
-              }}>
-              x
-            </button>
+              }}>x</button>
 
-            <h2 className="text-xl font-normal mb-6 pr-8 text-center" style={{ color: "#3b2212" }}>
-              {selectedProduct}
-            </h2>
+            <h2 className="text-xl font-normal mb-6 pr-8 text-center" style={{ color: "#3b2212" }}>{selectedProduct}</h2>
 
             <div className="space-y-5">
               {selectedProduct === "Quesadillas" && (
