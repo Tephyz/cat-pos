@@ -61,6 +61,9 @@ export default function POSLayout() {
   const [lastTransaction, setLastTransaction] = useState<{ number: string; method: string; total: number; discountAmount: number; amountTendered: string; gcashRef?: string } | null>(null);
   const [qtyInputs, setQtyInputs] = useState<Record<number, string>>({});
 
+  // ✅ NEW: Loading state for checkout processing
+  const [isProcessing, setIsProcessing] = useState(false);
+
   // Discount modal state
   const [discountModal, setDiscountModal] = useState(false);
   const [pendingDiscount, setPendingDiscount] = useState<"PWD" | "Senior" | null>(null);
@@ -408,11 +411,15 @@ export default function POSLayout() {
     return `TXN-${date}-${seq}`;
   };
 
+  // ─── processCheckout with loading state ──────────────────────────────────────
   const processCheckout = async (paymentMethod: "Cash" | "GCash", refNumber?: string) => {
     if (orderItems.length === 0) {
       setCheckoutMessage("No items in the cart to checkout.");
       return;
     }
+
+    // ✅ Start loading
+    setIsProcessing(true);
 
     try {
       const transactionNumber = generateTransactionNumber();
@@ -436,10 +443,30 @@ export default function POSLayout() {
         return cleaned;
       });
 
+      const orderPayload = {
+        transactionNumber,
+        items: sanitizedItems,
+        totalAmount: total,
+        discount: discount !== "None"
+          ? {
+              type: discount,
+              rate: 0.20,
+              amount: discountAmount,
+              customerName: discountCustomerName,
+              customerID: discountCustomerID,
+            }
+          : null,
+        paymentMethod,
+        gcashRefNumber: paymentMethod === "GCash" ? (refNumber ?? null) : null,
+        cashierName: user?.displayName ?? "Unknown",
+        createdAt: serverTimestamp(),
+      };
+
+      // Build add-on deductions map
       const servingSizes: Record<string, number> = {
-        'Pearl': 50,
-        'Nata de Coco': 40,
-        'Espresso': 30,
+        Pearl: 50,
+        "Nata de Coco": 40,
+        Espresso: 30,
       };
 
       const addOnDeductions: Record<string, number> = {};
@@ -453,48 +480,37 @@ export default function POSLayout() {
       });
 
       const addOnNames = Object.keys(addOnDeductions);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const inventoryRefsToUpdate: { ref: any, deduction: number }[] = [];
 
-      if (addOnNames.length > 0) {
+      if (addOnNames.length === 0) {
+        // FAST PATH — no add-ons, skip transaction overhead
+        await addDoc(collection(db, "orders"), orderPayload);
+      } else {
+        // SLOW PATH — update inventory via transaction
         const q = query(collection(db, "inventory"), where("name", "in", addOnNames));
         const querySnapshot = await getDocs(q);
-        querySnapshot.forEach((docSnap) => {
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const inventoryRefsToUpdate: { ref: any; deduction: number }[] = [];
+        querySnapshot.forEach(docSnap => {
           const data = docSnap.data();
           if (addOnDeductions[data.name]) {
             inventoryRefsToUpdate.push({
               ref: docSnap.ref,
-              deduction: addOnDeductions[data.name]
+              deduction: addOnDeductions[data.name],
             });
           }
         });
+
+        await runTransaction(db, async (transaction) => {
+          const orderDocRef = doc(collection(db, "orders"));
+          transaction.set(orderDocRef, orderPayload);
+          inventoryRefsToUpdate.forEach(({ ref, deduction }) => {
+            transaction.update(ref, { quantity: increment(-deduction) });
+          });
+        });
       }
 
-      await runTransaction(db, async (transaction) => {
-        const orderDocRef = doc(collection(db, "orders"));
-        transaction.set(orderDocRef, {
-          transactionNumber,
-          items: sanitizedItems,
-          totalAmount: total,
-          discount: discount !== "None"
-            ? {
-                type: discount,
-                rate: 0.20,
-                amount: discountAmount,
-                customerName: discountCustomerName,
-                customerID: discountCustomerID,
-              }
-            : null,
-          paymentMethod,
-          gcashRefNumber: paymentMethod === "GCash" ? (refNumber ?? null) : null,
-          cashierName: user?.displayName ?? "Unknown",
-          createdAt: serverTimestamp(),
-        });
-        inventoryRefsToUpdate.forEach(({ ref, deduction }) => {
-          transaction.update(ref, { quantity: increment(-deduction) });
-        });
-      });
-
+      // Reset all state after successful write
       setLastTransaction({
         number: transactionNumber,
         method: paymentMethod,
@@ -516,8 +532,12 @@ export default function POSLayout() {
     } catch (error) {
       console.error("Checkout failed:", error);
       setCheckoutMessage("Checkout failed. Please try again.");
+    } finally {
+      // ✅ Always stop loading, whether success or error
+      setIsProcessing(false);
     }
   };
+  // ─────────────────────────────────────────────────────────────────────────────
 
   const activeTabStyle = { background: "#3b2212", color: "white", boxShadow: "0 4px 12px rgba(59,34,18,0.25)" };
   const inactiveTabStyle = { background: "white", color: "#6b4c30", border: "1.5px solid #e8ddd4" };
@@ -587,6 +607,7 @@ export default function POSLayout() {
   return (
     <div className="min-h-screen flex" style={{ background: "#ede8e3" }}>
       <div className="flex-1 p-5 flex flex-col" style={{ minHeight: "100vh" }}>
+        {/* HEADER */}
         <div className="flex justify-between items-center px-6 py-4 rounded-2xl mb-5"
           style={{ background: "linear-gradient(135deg, #3b2212 0%, #6b3f22 100%)" }}>
           <div className="flex items-center gap-3">
@@ -594,7 +615,10 @@ export default function POSLayout() {
               style={{ background: "#f7f3ef", color: "#3b2212" }}>
               {(user?.displayName || "U")[0].toUpperCase()}
             </div>
-            <p className="text-white font-normal text-sm">{user?.displayName || "User"}</p>
+            <div>
+              <p className="text-white font-normal text-sm">{user?.displayName || "User"}</p>
+              <p className="text-xs" style={{ color: "#d4a97a" }}>Cashier1</p>
+            </div>
           </div>
           <div className="flex items-center gap-4">
             <div className="text-right">
@@ -831,7 +855,6 @@ export default function POSLayout() {
                   </button>
                 ))}
               </div>
-              {/* Show customer info if discount is applied */}
               {discount !== "None" && discountCustomerName && (
                 <div className="mt-2 px-3 py-2 rounded-xl text-xs flex items-center justify-between"
                   style={{ background: "#f0faf0", border: "1.5px solid #b6e2b6" }}>
@@ -870,23 +893,29 @@ export default function POSLayout() {
         )}
 
         <div className="space-y-2 mt-2">
-          <button disabled={orderItems.length === 0}
-            onClick={() => { if (orderItems.length > 0) setConfirmModal({ open: true, method: "Cash" }); }}
+          {/* ✅ Cash button — disabled while processing */}
+          <button
+            disabled={orderItems.length === 0 || isProcessing}
+            onClick={() => { if (orderItems.length > 0 && !isProcessing) setConfirmModal({ open: true, method: "Cash" }); }}
             className="w-full py-4 rounded-xl font-normal transition-all"
-            style={{ fontSize: "15px", ...(orderItems.length === 0
+            style={{ fontSize: "15px", ...(orderItems.length === 0 || isProcessing
               ? { background: "#e8e0d8", color: "#b09070", cursor: "not-allowed" }
               : { background: "#3b2212", color: "white" }) }}>
             Cash {orderItems.length > 0 && `— ₱${total.toFixed(2)}`}
           </button>
-          <button disabled={orderItems.length === 0}
-            onClick={() => { if (orderItems.length > 0) setConfirmModal({ open: true, method: "GCash" }); }}
+
+          {/* ✅ GCash button — disabled while processing */}
+          <button
+            disabled={orderItems.length === 0 || isProcessing}
+            onClick={() => { if (orderItems.length > 0 && !isProcessing) setConfirmModal({ open: true, method: "GCash" }); }}
             className="w-full py-4 rounded-xl font-normal transition-all"
-            style={{ fontSize: "15px", ...(orderItems.length === 0
+            style={{ fontSize: "15px", ...(orderItems.length === 0 || isProcessing
               ? { background: "#e8e0d8", color: "#b09070", cursor: "not-allowed" }
               : { background: "#0070ba", color: "white" }) }}>
             GCash {orderItems.length > 0 && `— ₱${total.toFixed(2)}`}
           </button>
         </div>
+
         {checkoutMessage && (
           <p className="text-center text-sm mt-2" style={{ color: checkoutMessage.includes("failed") ? "#c0392b" : "#2d7a38" }}>
             {checkoutMessage}
@@ -894,12 +923,11 @@ export default function POSLayout() {
         )}
       </div>
 
-      {/* Discount Info Modal with Touch Keyboard - No Preview Section */}
+      {/* Discount Info Modal */}
       {discountModal && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-50 p-4">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xl" style={{ overflow: "visible" }}>
             <div className="p-6" style={{ overflow: "visible" }}>
-              {/* Header */}
               <div className="mb-4">
                 <h2 className="text-2xl font-bold" style={{ color: "#3b2212" }}>
                   {pendingDiscount} Discount
@@ -911,9 +939,7 @@ export default function POSLayout() {
                 Tap on an input field to use the keyboard
               </p>
 
-              {/* Input Fields */}
               <div className="space-y-4 mb-4">
-                {/* Customer Name */}
                 <div>
                   <label className="text-sm font-semibold block mb-1.5" style={{ color: "#3b2212" }}>
                     Customer Name <span style={{ color: "#c0392b" }}>*</span>
@@ -932,7 +958,6 @@ export default function POSLayout() {
                   </div>
                 </div>
 
-                {/* ID Number */}
                 <div>
                   <label className="text-sm font-semibold block mb-1.5" style={{ color: "#3b2212" }}>
                     ID Number <span style={{ color: "#c0392b" }}>*</span>
@@ -952,112 +977,84 @@ export default function POSLayout() {
                 </div>
               </div>
 
-              {/* Touch Keyboard */}
               {activeInput && (
                 <div className="mt-4 pt-4 border-t" style={{ borderColor: "#e8ddd4" }}>
                   <div className="flex justify-between items-center mb-3">
                     <p className="text-sm font-semibold" style={{ color: "#3b2212" }}>
                       Enter {activeInput === "name" ? "Name" : "ID Number"}
                     </p>
-    
                   </div>
                   
                   {activeInput === "name" ? (
-                    // Alphabetical keyboard for name
                     <div className="space-y-2">
                       <div className="grid grid-cols-10 gap-1.5">
                         {["Q","W","E","R","T","Y","U","I","O","P"].map((key) => (
-                          <button
-                            key={key}
-                            onClick={() => handleKeyPress(key)}
+                          <button key={key} onClick={() => handleKeyPress(key)}
                             className="py-2.5 rounded-lg font-semibold text-base transition-all active:scale-95"
-                            style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}
-                          >
+                            style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
                             {key}
                           </button>
                         ))}
                       </div>
                       <div className="grid grid-cols-9 gap-1.5">
                         {["A","S","D","F","G","H","J","K","L"].map((key) => (
-                          <button
-                            key={key}
-                            onClick={() => handleKeyPress(key)}
+                          <button key={key} onClick={() => handleKeyPress(key)}
                             className="py-2.5 rounded-lg font-semibold text-base transition-all active:scale-95"
-                            style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}
-                          >
+                            style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
                             {key}
                           </button>
                         ))}
                       </div>
                       <div className="grid grid-cols-9 gap-1.5">
                         {["Z","X","C","V","B","N","M"].map((key) => (
-                          <button
-                            key={key}
-                            onClick={() => handleKeyPress(key)}
+                          <button key={key} onClick={() => handleKeyPress(key)}
                             className="py-2.5 rounded-lg font-semibold text-base transition-all active:scale-95"
-                            style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}
-                          >
+                            style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
                             {key}
                           </button>
                         ))}
-                        <button
-                          onClick={() => handleKeyPress("SPACE")}
+                        <button onClick={() => handleKeyPress("SPACE")}
                           className="py-2.5 rounded-lg font-semibold text-sm transition-all active:scale-95 col-span-2"
-                          style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}
-                        >
+                          style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
                           SPACE
                         </button>
-                        <button
-                          onClick={() => handleKeyPress("BACKSPACE")}
+                        <button onClick={() => handleKeyPress("BACKSPACE")}
                           className="py-2.5 rounded-lg font-semibold text-base transition-all active:scale-95"
-                          style={{ background: "#fee2e2", color: "#c0392b", border: "1px solid #f5c6c6" }}
-                        >
+                          style={{ background: "#fee2e2", color: "#c0392b", border: "1px solid #f5c6c6" }}>
                           ⌫
                         </button>
-                        <button
-                          onClick={() => handleKeyPress("CLEAR")}
+                        <button onClick={() => handleKeyPress("CLEAR")}
                           className="py-2.5 rounded-lg font-semibold text-sm transition-all active:scale-95"
-                          style={{ background: "#fff0f0", color: "#c0392b", border: "1px solid #f5c6c6" }}
-                        >
+                          style={{ background: "#fff0f0", color: "#c0392b", border: "1px solid #f5c6c6" }}>
                           CLEAR
                         </button>
                       </div>
                     </div>
                   ) : (
-                    // Numeric keyboard for ID
                     <div>
                       <div className="grid grid-cols-3 gap-2 mb-2">
                         {["1","2","3","4","5","6","7","8","9"].map((num) => (
-                          <button
-                            key={num}
-                            onClick={() => handleKeyPress(num)}
+                          <button key={num} onClick={() => handleKeyPress(num)}
                             className="py-4 rounded-xl font-bold text-2xl transition-all active:scale-95"
-                            style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}
-                          >
+                            style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
                             {num}
                           </button>
                         ))}
                       </div>
                       <div className="grid grid-cols-3 gap-2">
-                        <button
-                          onClick={() => handleKeyPress("CLEAR")}
+                        <button onClick={() => handleKeyPress("CLEAR")}
                           className="py-4 rounded-xl font-bold text-base transition-all active:scale-95"
-                          style={{ background: "#fff0f0", color: "#c0392b", border: "1.5px solid #f5c6c6" }}
-                        >
+                          style={{ background: "#fff0f0", color: "#c0392b", border: "1.5px solid #f5c6c6" }}>
                           CLEAR
                         </button>
-                        <button
-                          onClick={() => handleKeyPress("0")}
+                        <button onClick={() => handleKeyPress("0")}
                           className="py-4 rounded-xl font-bold text-2xl transition-all active:scale-95"
-                          style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}
-                        >
+                          style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
                           0
                         </button>
-                        <button
-                          onClick={() => handleKeyPress("BACKSPACE")}
+                        <button onClick={() => handleKeyPress("BACKSPACE")}
                           className="py-4 rounded-xl font-bold text-2xl transition-all active:scale-95"
-                          style={{ background: "#fee2e2", color: "#c0392b", border: "1.5px solid #f5c6c6" }}
-                        >
+                          style={{ background: "#fee2e2", color: "#c0392b", border: "1.5px solid #f5c6c6" }}>
                           ⌫
                         </button>
                       </div>
@@ -1066,10 +1063,8 @@ export default function POSLayout() {
                 </div>
               )}
 
-              {/* Action Buttons */}
               <div className="flex gap-4 mt-6">
-                <button
-                  onClick={cancelDiscount}
+                <button onClick={cancelDiscount}
                   className="flex-1 py-4 rounded-2xl font-bold text-lg"
                   style={{ background: "#f0e8e0", color: "#3b2212" }}>
                   Cancel
@@ -1187,15 +1182,27 @@ export default function POSLayout() {
                 onClick={() => { setCashModal(false); setAmountTendered(""); }}
                 className="flex-1 py-4 rounded-2xl font-bold text-lg"
                 style={{ background: "#f0e8e0", color: "#3b2212" }}>Cancel</button>
+
+              {/* ✅ Cash confirm button with spinner */}
               <button
-                disabled={!amountTendered || parseFloat(amountTendered) < total}
+                disabled={!amountTendered || parseFloat(amountTendered) < total || isProcessing}
                 onClick={() => processCheckout("Cash")}
-                className="flex-1 py-4 rounded-2xl font-bold text-lg"
+                className="flex-1 py-4 rounded-2xl font-bold text-lg flex items-center justify-center gap-2"
                 style={{
-                  background: !amountTendered || parseFloat(amountTendered) < total ? "#e8e0d8" : "#3b2212",
-                  color: !amountTendered || parseFloat(amountTendered) < total ? "#b09070" : "white",
-                  cursor: !amountTendered || parseFloat(amountTendered) < total ? "not-allowed" : "pointer",
-                }}>Confirm Cash</button>
+                  background: !amountTendered || parseFloat(amountTendered) < total || isProcessing ? "#e8e0d8" : "#3b2212",
+                  color: !amountTendered || parseFloat(amountTendered) < total || isProcessing ? "#b09070" : "white",
+                  cursor: !amountTendered || parseFloat(amountTendered) < total || isProcessing ? "not-allowed" : "pointer",
+                }}>
+                {isProcessing ? (
+                  <>
+                    <svg className="animate-spin" width="20" height="20" viewBox="0 0 24 24" fill="none">
+                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.3"/>
+                      <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
+                    </svg>
+                    Processing...
+                  </>
+                ) : "Confirm Cash"}
+              </button>
             </div>
           </div>
         </div>
@@ -1234,7 +1241,7 @@ export default function POSLayout() {
                   lineHeight: 1,
                   letterSpacing: "0.15em",
                 }}>
-                {gcashRefNumber || "— — — — — — — — — — — — —"}
+                {gcashRefNumber || "— — — — — — — — — — "}
               </p>
             </div>
             <div className="flex justify-between items-center mb-3">
@@ -1289,20 +1296,30 @@ export default function POSLayout() {
                 style={{ background: "#f0e8e0", color: "#3b2212" }}>
                 Cancel
               </button>
+
+              {/* ✅ GCash confirm button with spinner */}
               <button
-                disabled={gcashRefNumber.trim().length < 13}
+                disabled={gcashRefNumber.trim().length < 13 || isProcessing}
                 onClick={() => {
                   processCheckout("GCash", gcashRefNumber.trim());
                   setGcashRefModal(false);
                   setGcashRefNumber("");
                 }}
-                className="flex-1 py-4 rounded-2xl font-bold text-lg transition-all"
+                className="flex-1 py-4 rounded-2xl font-bold text-lg transition-all flex items-center justify-center gap-2"
                 style={{
-                  background: gcashRefNumber.trim().length < 13 ? "#e8e0d8" : "#0070ba",
-                  color: gcashRefNumber.trim().length < 13 ? "#b09070" : "white",
-                  cursor: gcashRefNumber.trim().length < 13 ? "not-allowed" : "pointer",
+                  background: gcashRefNumber.trim().length < 13 || isProcessing ? "#e8e0d8" : "#0070ba",
+                  color: gcashRefNumber.trim().length < 13 || isProcessing ? "#b09070" : "white",
+                  cursor: gcashRefNumber.trim().length < 13 || isProcessing ? "not-allowed" : "pointer",
                 }}>
-                Confirm GCash
+                {isProcessing ? (
+                  <>
+                    <svg className="animate-spin" width="20" height="20" viewBox="0 0 24 24" fill="none">
+                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.3"/>
+                      <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
+                    </svg>
+                    Processing...
+                  </>
+                ) : "Confirm GCash"}
               </button>
             </div>
           </div>
