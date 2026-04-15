@@ -61,7 +61,6 @@ export default function POSLayout() {
   const [lastTransaction, setLastTransaction] = useState<{ number: string; method: string; total: number; discountAmount: number; amountTendered: string; gcashRef?: string } | null>(null);
   const [qtyInputs, setQtyInputs] = useState<Record<number, string>>({});
 
-  // ✅ NEW: Loading state for checkout processing
   const [isProcessing, setIsProcessing] = useState(false);
 
   // Discount modal state
@@ -411,14 +410,12 @@ export default function POSLayout() {
     return `TXN-${date}-${seq}`;
   };
 
-  // ─── processCheckout with loading state ──────────────────────────────────────
   const processCheckout = async (paymentMethod: "Cash" | "GCash", refNumber?: string) => {
     if (orderItems.length === 0) {
       setCheckoutMessage("No items in the cart to checkout.");
       return;
     }
 
-    // ✅ Start loading
     setIsProcessing(true);
 
     try {
@@ -462,7 +459,6 @@ export default function POSLayout() {
         createdAt: serverTimestamp(),
       };
 
-      // Build add-on deductions map
       const servingSizes: Record<string, number> = {
         Pearl: 50,
         "Nata de Coco": 40,
@@ -482,10 +478,8 @@ export default function POSLayout() {
       const addOnNames = Object.keys(addOnDeductions);
 
       if (addOnNames.length === 0) {
-        // FAST PATH — no add-ons, skip transaction overhead
         await addDoc(collection(db, "orders"), orderPayload);
       } else {
-        // SLOW PATH — update inventory via transaction
         const q = query(collection(db, "inventory"), where("name", "in", addOnNames));
         const querySnapshot = await getDocs(q);
 
@@ -510,7 +504,6 @@ export default function POSLayout() {
         });
       }
 
-      // Reset all state after successful write
       setLastTransaction({
         number: transactionNumber,
         method: paymentMethod,
@@ -523,6 +516,8 @@ export default function POSLayout() {
       setDiscount("None");
       setAmountTendered("");
       setCashModal(false);
+      // ✅ FIX: GCash modal is now closed here (after Firestore confirms),
+      //         so the spinner stays visible the entire time it's processing.
       setGcashRefModal(false);
       setGcashRefNumber("");
       setCheckoutMessage(null);
@@ -533,11 +528,9 @@ export default function POSLayout() {
       console.error("Checkout failed:", error);
       setCheckoutMessage("Checkout failed. Please try again.");
     } finally {
-      // ✅ Always stop loading, whether success or error
       setIsProcessing(false);
     }
   };
-  // ─────────────────────────────────────────────────────────────────────────────
 
   const activeTabStyle = { background: "#3b2212", color: "white", boxShadow: "0 4px 12px rgba(59,34,18,0.25)" };
   const inactiveTabStyle = { background: "white", color: "#6b4c30", border: "1.5px solid #e8ddd4" };
@@ -550,7 +543,6 @@ export default function POSLayout() {
     setSelectedProductCategory(getCategoryLabel(item));
   };
 
-  // Keyboard handlers for discount modal
   const handleKeyPress = (key: string) => {
     if (activeInput === "name") {
       if (key === "BACKSPACE") {
@@ -893,7 +885,6 @@ export default function POSLayout() {
         )}
 
         <div className="space-y-2 mt-2">
-          {/* ✅ Cash button — disabled while processing */}
           <button
             disabled={orderItems.length === 0 || isProcessing}
             onClick={() => { if (orderItems.length > 0 && !isProcessing) setConfirmModal({ open: true, method: "Cash" }); }}
@@ -904,7 +895,6 @@ export default function POSLayout() {
             Cash {orderItems.length > 0 && `— ₱${total.toFixed(2)}`}
           </button>
 
-          {/* ✅ GCash button — disabled while processing */}
           <button
             disabled={orderItems.length === 0 || isProcessing}
             onClick={() => { if (orderItems.length > 0 && !isProcessing) setConfirmModal({ open: true, method: "GCash" }); }}
@@ -1182,8 +1172,6 @@ export default function POSLayout() {
                 onClick={() => { setCashModal(false); setAmountTendered(""); }}
                 className="flex-1 py-4 rounded-2xl font-bold text-lg"
                 style={{ background: "#f0e8e0", color: "#3b2212" }}>Cancel</button>
-
-              {/* ✅ Cash confirm button with spinner */}
               <button
                 disabled={!amountTendered || parseFloat(amountTendered) < total || isProcessing}
                 onClick={() => processCheckout("Cash")}
@@ -1297,14 +1285,13 @@ export default function POSLayout() {
                 Cancel
               </button>
 
-              {/* ✅ GCash confirm button with spinner */}
+              {/* ✅ FIX: onClick now only calls processCheckout.
+                   setGcashRefModal(false) and setGcashRefNumber("") have been moved
+                   inside processCheckout (in the success block above), so the spinner
+                   stays visible the entire time Firestore is processing. */}
               <button
                 disabled={gcashRefNumber.trim().length < 13 || isProcessing}
-                onClick={() => {
-                  processCheckout("GCash", gcashRefNumber.trim());
-                  setGcashRefModal(false);
-                  setGcashRefNumber("");
-                }}
+                onClick={() => processCheckout("GCash", gcashRefNumber.trim())}
                 className="flex-1 py-4 rounded-2xl font-bold text-lg transition-all flex items-center justify-center gap-2"
                 style={{
                   background: gcashRefNumber.trim().length < 13 || isProcessing ? "#e8e0d8" : "#0070ba",
