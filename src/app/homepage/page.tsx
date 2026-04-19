@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
-import { collection, addDoc, serverTimestamp, runTransaction, doc, increment, query, where, getDocs } from "firebase/firestore";
+import { collection, addDoc, serverTimestamp, runTransaction, doc, increment, query, where, getDocs, onSnapshot, DocumentReference } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
 interface OrderItem {
@@ -18,13 +18,106 @@ interface OrderItem {
   variant?: string;
 }
 
+interface InventoryItem {
+  name: string;
+  quantity: number;
+  unit: string;
+}
+
+type Recipes = Record<string, Record<string, Record<string, number>>>;
+
+const RECIPES: Recipes = {
+  // --- MILK TEAS ---
+  "Okinawa": {
+    "Medium": { "Assam Black Tea": 200, "Creamer": 20, "Fructose": 25, "Okinawa Powder": 15 },
+    "Large":  { "Assam Black Tea": 300, "Creamer": 30, "Fructose": 35, "Okinawa Powder": 25 } 
+  },
+  "Dark Choco": {
+    "Medium": { "Assam Black Tea": 200, "Creamer": 20, "Fructose": 25, "Dark Choco Powder": 20 },
+    "Large":  { "Assam Black Tea": 300, "Creamer": 30, "Fructose": 35, "Dark Choco Powder": 30 }
+  },
+  "Strawberry": {
+    "Medium": { "Assam Black Tea": 200, "Creamer": 20, "Fructose": 25, "Strawberry Powder": 20 },
+    "Large":  { "Assam Black Tea": 300, "Creamer": 30, "Fructose": 35, "Strawberry Powder": 30 }
+  },
+  "Capuccino": { 
+    "Medium": { "Assam Black Tea": 200, "Creamer": 20, "Fructose": 25, "Cappuccino Powder": 20 },
+    "Large":  { "Assam Black Tea": 300, "Creamer": 30, "Fructose": 35, "Cappuccino Powder": 30 }
+  },
+
+  // --- FRAPPES ---
+  "Mocha": {
+    "Medium": { "Coffee": 80, "Creamer": 20, "Vanilla Powder": 10, "Fructose": 20 },
+    "Large":  { "Coffee": 120, "Creamer": 30, "Vanilla Powder": 15, "Fructose": 30 }
+  },
+  "Dark Mocha": {
+    "Medium": { "Coffee": 80, "Creamer": 20, "Vanilla Powder": 10, "Fructose": 20, "Dark Chocolate Powder": 10 },
+    "Large":  { "Coffee": 120, "Creamer": 30, "Vanilla Powder": 15, "Fructose": 30, "Dark Chocolate Powder": 15 }
+  },
+  "Caramel": {
+    "Medium": { "Coffee": 80, "Creamer": 20, "Vanilla Powder": 10, "Fructose": 10, "Caramel Syrup": 30 },
+    "Large":  { "Coffee": 120, "Creamer": 30, "Vanilla Powder": 15, "Fructose": 20, "Caramel Syrup": 40 }
+  },
+  "Vanilla": {
+    "Medium": { "Creamer": 10, "Vanilla Powder": 20, "Fructose": 20, "Water": 50 },
+    "Large":  { "Creamer": 15, "Vanilla Powder": 30, "Fructose": 30, "Water": 70 }
+  },
+  "Coffee Jelly": {
+    "Medium": { "Coffee": 80, "Creamer": 20, "Vanilla Powder": 10, "Fructose": 15 },
+    "Large":  { "Coffee": 120, "Creamer": 30, "Vanilla Powder": 15, "Fructose": 20 }
+  },
+  "Chocolate Chip": {
+    "Medium": { "Creamer": 10, "Vanilla Powder": 20, "Fructose": 15, "Chocolate Syrup": 40, "Chocolate Chip": 10, "Water": 50 },
+    "Large":  { "Creamer": 15, "Vanilla Powder": 30, "Fructose": 25, "Chocolate Syrup": 50, "Chocolate Chip": 15, "Water": 70 }
+  },
+
+  // --- YAKULT MIX ---
+  "Yakult Mix - Strawberry": { "Medium": { "Cold Water": 80, "Syrup": 15, "Fructose": 20, "Yakult": 1 }, "Large": { "Cold Water": 175, "Syrup": 25, "Fructose": 30, "Yakult": 2 } },
+  "Yakult Mix - Green Apple": { "Medium": { "Cold Water": 80, "Syrup": 15, "Fructose": 20, "Yakult": 1 }, "Large": { "Cold Water": 175, "Syrup": 25, "Fructose": 30, "Yakult": 2 } },
+  "Yakult Mix - Blueberry": { "Medium": { "Cold Water": 80, "Syrup": 15, "Fructose": 20, "Yakult": 1 }, "Large": { "Cold Water": 175, "Syrup": 25, "Fructose": 30, "Yakult": 2 } },
+  "Yakult Mix - Lychee": { "Medium": { "Cold Water": 80, "Syrup": 15, "Fructose": 20, "Yakult": 1 }, "Large": { "Cold Water": 175, "Syrup": 25, "Fructose": 30, "Yakult": 2 } },
+  "Yakult Mix - Wintermelon": { "Medium": { "Cold Water": 80, "Syrup": 15, "Fructose": 20, "Yakult": 1 }, "Large": { "Cold Water": 175, "Syrup": 25, "Fructose": 30, "Yakult": 2 } },
+
+  // --- FRUIT TEAS ---
+  "Fruit Tea - Green Apple": { "Medium": { "Jasmine Green Tea": 200, "Syrup": 40, "Fructose": 15 }, "Large": { "Jasmine Green Tea": 300, "Syrup": 60, "Fructose": 25 } },
+  "Fruit Tea - Blueberry": { "Medium": { "Jasmine Green Tea": 200, "Syrup": 40, "Fructose": 15 }, "Large": { "Jasmine Green Tea": 300, "Syrup": 60, "Fructose": 25 } },
+  "Fruit Tea - Lychee": { "Medium": { "Jasmine Green Tea": 200, "Syrup": 40, "Fructose": 15 }, "Large": { "Jasmine Green Tea": 300, "Syrup": 60, "Fructose": 25 } },
+  "Fruit Tea - Strawberry": { "Medium": { "Jasmine Green Tea": 200, "Syrup": 40, "Fructose": 15 }, "Large": { "Jasmine Green Tea": 300, "Syrup": 60, "Fructose": 25 } },
+  "Fruit Tea - Wintermelon": { "Medium": { "Jasmine Green Tea": 200, "Syrup": 40, "Fructose": 15 }, "Large": { "Jasmine Green Tea": 300, "Syrup": 60, "Fructose": 25 } }
+};
+
+const ADD_ON_SERVING_SIZES: Record<string, number> = {
+  Pearl: 50,
+  "Nata de Coco": 40,
+  Espresso: 30,
+};
+
 export default function POSLayout() {
   const { user, loading, logout } = useAuth();
   const router = useRouter();
 
+  const [inventoryStock, setInventoryStock] = useState<Record<string, { quantity: number; unit: string }>>({});
+
   useEffect(() => {
     if (!loading && !user) router.push("/");
   }, [user, loading, router]);
+
+  useEffect(() => {
+    const unsubscribe = onSnapshot(collection(db, "inventory"), (snapshot) => {
+      const stock: Record<string, { quantity: number; unit: string }> = {};
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        if (data.name) {
+          stock[data.name] = { 
+            quantity: data.quantity || 0, 
+            unit: data.unit || "units" 
+          };
+        }
+      });
+      setInventoryStock(stock);
+    });
+    return () => unsubscribe();
+  }, []);
 
   const handleLogout = async () => {
     await logout();
@@ -63,13 +156,10 @@ export default function POSLayout() {
 
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Discount modal state
   const [discountModal, setDiscountModal] = useState(false);
   const [pendingDiscount, setPendingDiscount] = useState<"PWD" | "Senior" | null>(null);
   const [discountCustomerName, setDiscountCustomerName] = useState("");
   const [discountCustomerID, setDiscountCustomerID] = useState("");
-  
-  // Keyboard states for discount modal
   const [activeInput, setActiveInput] = useState<"name" | "id" | null>(null);
   const [tempName, setTempName] = useState("");
   const [tempID, setTempID] = useState("");
@@ -234,18 +324,12 @@ export default function POSLayout() {
   const getDrinkPrice = (productName: string, size: string, category: string, frappeType: string | null): number => {
     const s = size === "Large" || size === "Pot" || size === "M - Pot" ? "L" : "M";
     switch (category) {
-      case "Coffee":
-        return coffeePrices[productName]?.[s as "M"|"L"] ?? 150;
-      case "Non Coffee":
-        return nonCoffeePrices[productName]?.[s as "M"|"L"] ?? 140;
-      case "Milktea":
-        return milkteaPrices[productName]?.[s as "M"|"L"] ?? 120;
-      case "Yakult Mix":
-        return yakultMixPrices[productName]?.[s as "M"|"L"] ?? 150;
-      case "Fruit Tea":
-        return fruitTeaPrices[productName]?.[s as "M"|"L"] ?? 110;
-      case "Hot Tea":
-        return hotTeaPrices[productName] ?? 120;
+      case "Coffee": return coffeePrices[productName]?.[s as "M"|"L"] ?? 150;
+      case "Non Coffee": return nonCoffeePrices[productName]?.[s as "M"|"L"] ?? 140;
+      case "Milktea": return milkteaPrices[productName]?.[s as "M"|"L"] ?? 120;
+      case "Yakult Mix": return yakultMixPrices[productName]?.[s as "M"|"L"] ?? 150;
+      case "Fruit Tea": return fruitTeaPrices[productName]?.[s as "M"|"L"] ?? 110;
+      case "Hot Tea": return hotTeaPrices[productName] ?? 120;
       default: {
         const fType = frappeType ?? getFrappeType(productName);
         if (fType === "Coffee Based") return frappeCoffeeBasedPrices[productName]?.[s as "M"|"L"] ?? 155;
@@ -265,7 +349,6 @@ export default function POSLayout() {
 
   const allFoodItems = Object.values(foodProducts).flat();
   const allFrappeItems = Object.values(frappeProducts).flat();
-
   const quesadillasVariants = ["Beef", "Cheese"];
   const addOns = ["Espresso", "Coffee Jelly", "Oreo", "Caramel", "Pearl", "Nata", "Whip Cream"];
 
@@ -292,35 +375,94 @@ export default function POSLayout() {
     return "";
   };
 
-  const allProducts: string[] = [
-    ...Object.values(products).flat(),
-    ...allFrappeItems,
-    ...allFoodItems,
-  ];
+  const allProducts: string[] = [ ...Object.values(products).flat(), ...allFrappeItems, ...allFoodItems ];
   const uniqueAllProducts = [...new Set(allProducts)];
-
-  const searchResults = searchQuery.trim().length > 0
-    ? uniqueAllProducts.filter(item =>
-        item.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-    : [];
-
+  const searchResults = searchQuery.trim().length > 0 ? uniqueAllProducts.filter(item => item.toLowerCase().includes(searchQuery.toLowerCase())) : [];
   const isSearching = searchQuery.trim().length > 0;
-
   const checkIsFood = (productName: string) => allFoodItems.includes(productName);
   const checkIsFrappe = (productName: string) => allFrappeItems.includes(productName);
-
   const isFood = isSearching ? selectedProductIsFood : activeCategory === "Food & Bites";
-
   const drinkCategoriesHideTemp = ["Milktea", "Yakult Mix", "Fruit Tea", "Frappe", "Hot Tea", "Food & Bites"];
-  const hideTemperature = isFood || (isSearching
-    ? checkIsFrappe(selectedProduct || "")
-    : drinkCategoriesHideTemp.includes(activeCategory));
-
+  const hideTemperature = isFood || (isSearching ? checkIsFrappe(selectedProduct || "") : drinkCategoriesHideTemp.includes(activeCategory));
   const categoriesWithAddOns = ["Coffee", "Non Coffee", "Milktea", "Yakult Mix", "Fruit Tea", "Frappe"];
-  const showAddOns = isSearching
-    ? !checkIsFood(selectedProduct || "")
-    : categoriesWithAddOns.includes(activeCategory);
+  const showAddOns = isSearching ? !checkIsFood(selectedProduct || "") : categoriesWithAddOns.includes(activeCategory);
+
+  // ---------------------------------------------------------
+  // RESERVED STOCK (Compute what's already in the cart)
+  // ---------------------------------------------------------
+  const alreadyInCartReserved: Record<string, number> = {};
+  orderItems.forEach(cartItem => {
+    const cSizeKey = cartItem.size === "Large" ? "Large" : "Medium";
+    const catLabel = cartItem.category.split(" · ")[0];
+    const cSpecificRecipeKey = `${catLabel} - ${cartItem.name}`;
+    const cRecipe = RECIPES[cSpecificRecipeKey]?.[cSizeKey] || RECIPES[cartItem.name]?.[cSizeKey];
+    
+    if (cRecipe) {
+      Object.entries(cRecipe).forEach(([ing, amt]) => {
+        alreadyInCartReserved[ing] = (alreadyInCartReserved[ing] || 0) + ((amt as number) * cartItem.quantity);
+      });
+    }
+    if (cartItem.addOns) {
+      cartItem.addOns.forEach(addOn => {
+        alreadyInCartReserved[addOn] = (alreadyInCartReserved[addOn] || 0) + ((ADD_ON_SERVING_SIZES[addOn] || 1) * cartItem.quantity);
+      });
+    }
+  });
+
+  // ---------------------------------------------------------
+  // OOS CHECKER PARA SA MAIN UI MENU BUTTONS
+  // ---------------------------------------------------------
+  const checkIsOOS = (item: string): boolean => {
+    const catLabel = getCategoryLabel(item).split(" · ")[0];
+    const specificRecipeKey = `${catLabel} - ${item}`;
+    const recipe = RECIPES[specificRecipeKey]?.["Medium"] || RECIPES[item]?.["Medium"];
+    
+    if (!recipe) return false; 
+
+    for (const [ingredient, neededAmount] of Object.entries(recipe)) {
+      const stockAvailable = inventoryStock[ingredient]?.quantity || 0;
+      const reserved = alreadyInCartReserved[ingredient] || 0;
+      if ((reserved + (neededAmount as number)) > stockAvailable) {
+        return true; 
+      }
+    }
+    return false;
+  };
+
+  // ---------------------------------------------------------
+  // REAL-TIME OOS CHECKER PARA SA LOOB NG MODAL
+  // ---------------------------------------------------------
+  const currentMissingIngredients: string[] = [];
+  if (selectedProduct) {
+    const requiredForThisItem: Record<string, number> = {};
+    const sizeKey = sizeOption === "Large" ? "Large" : "Medium";
+    const catLabel = selectedProductCategory.split(" · ")[0];
+    const specificRecipeKey = `${catLabel} - ${selectedProduct}`;
+    
+    const recipe = RECIPES[specificRecipeKey]?.[sizeKey] || RECIPES[selectedProduct]?.[sizeKey]; 
+    
+    if (recipe) {
+      Object.entries(recipe).forEach(([ingredientName, amount]) => {
+        requiredForThisItem[ingredientName] = (requiredForThisItem[ingredientName] || 0) + (amount as number);
+      });
+    }
+
+    if (selectedAddOns.length > 0) {
+      selectedAddOns.forEach(addOn => {
+        requiredForThisItem[addOn] = (requiredForThisItem[addOn] || 0) + (ADD_ON_SERVING_SIZES[addOn] || 1);
+      });
+    }
+
+    Object.entries(requiredForThisItem).forEach(([ingredient, neededAmount]) => {
+      const stockAvailable = inventoryStock[ingredient]?.quantity || 0;
+      const reserved = alreadyInCartReserved[ingredient] || 0;
+      const unit = inventoryStock[ingredient]?.unit || "units";
+      
+      if ((reserved + neededAmount) > stockAvailable) {
+        currentMissingIngredients.push(`${ingredient} (Need: ${neededAmount}${unit}, Available: ${stockAvailable - reserved}${unit})`);
+      }
+    });
+  }
 
   const getModalPrice = (): number => {
     if (!selectedProduct) return 0;
@@ -342,6 +484,7 @@ export default function POSLayout() {
   const handleAddToOrder = () => {
     if (!selectedProduct) return;
     if (selectedProduct === "Quesadillas" && !selectedVariant) return;
+    if (currentMissingIngredients.length > 0) return; // Prevent adding if OOS
 
     let price: number;
     let displayName = selectedProduct;
@@ -387,10 +530,7 @@ export default function POSLayout() {
   };
   const handleClearAddOns = () => setSelectedAddOns([]);
 
-  const subtotal = orderItems.reduce(
-    (acc, item) => acc + item.price * item.quantity,
-    0
-  );
+  const subtotal = orderItems.reduce((acc, item) => acc + item.price * item.quantity, 0);
 
   let discountAmount = 0;
   let total = subtotal;
@@ -411,122 +551,98 @@ export default function POSLayout() {
   };
 
   const processCheckout = async (paymentMethod: "Cash" | "GCash", refNumber?: string) => {
-    if (orderItems.length === 0) {
-      setCheckoutMessage("No items in the cart to checkout.");
-      return;
-    }
-
+    if (orderItems.length === 0) return;
     setIsProcessing(true);
 
     try {
       const transactionNumber = generateTransactionNumber();
-
       const sanitizedItems = orderItems.map(item => {
         const cleaned: Record<string, unknown> = {
-          name: item.name,
-          category: item.category ?? "",
-          temperature: item.temperature ?? "",
-          size: item.size ?? "",
-          sugar: item.sugar ?? "",
-          quantity: item.quantity,
-          price: item.price,
+          name: item.name, category: item.category ?? "", temperature: item.temperature ?? "",
+          size: item.size ?? "", sugar: item.sugar ?? "", quantity: item.quantity, price: item.price,
         };
-        if (Array.isArray(item.addOns) && item.addOns.length > 0) {
-          cleaned.addOns = item.addOns;
-        }
-        if (typeof item.variant !== "undefined") {
-          cleaned.variant = item.variant;
-        }
+        if (Array.isArray(item.addOns) && item.addOns.length > 0) cleaned.addOns = item.addOns;
+        if (typeof item.variant !== "undefined") cleaned.variant = item.variant;
         return cleaned;
       });
 
       const orderPayload = {
-        transactionNumber,
-        items: sanitizedItems,
-        totalAmount: total,
-        discount: discount !== "None"
-          ? {
-              type: discount,
-              rate: 0.20,
-              amount: discountAmount,
-              customerName: discountCustomerName,
-              customerID: discountCustomerID,
-            }
-          : null,
-        paymentMethod,
-        gcashRefNumber: paymentMethod === "GCash" ? (refNumber ?? null) : null,
-        cashierName: user?.displayName ?? "Unknown",
-        createdAt: serverTimestamp(),
+        transactionNumber, items: sanitizedItems, totalAmount: total,
+        discount: discount !== "None" ? { type: discount, rate: 0.20, amount: discountAmount, customerName: discountCustomerName, customerID: discountCustomerID } : null,
+        paymentMethod, gcashRefNumber: paymentMethod === "GCash" ? (refNumber ?? null) : null,
+        cashierName: user?.displayName ?? "Unknown", createdAt: serverTimestamp(),
       };
 
-      const servingSizes: Record<string, number> = {
-        Pearl: 50,
-        "Nata de Coco": 40,
-        Espresso: 30,
-      };
-
-      const addOnDeductions: Record<string, number> = {};
+      const requiredIngredients: Record<string, number> = {};
       orderItems.forEach(item => {
+        const sizeKey = item.size === "Large" ? "Large" : "Medium";
+        const catLabel = item.category.split(" · ")[0];
+        const specificRecipeKey = `${catLabel} - ${item.name}`;
+        const recipe = RECIPES[specificRecipeKey]?.[sizeKey] || RECIPES[item.name]?.[sizeKey]; 
+        
+        if (recipe) {
+          Object.entries(recipe).forEach(([ingredientName, amount]) => {
+            requiredIngredients[ingredientName] = (requiredIngredients[ingredientName] || 0) + ((amount as number) * item.quantity);
+          });
+        }
         if (Array.isArray(item.addOns) && item.addOns.length > 0) {
           item.addOns.forEach(addOn => {
-            const deduction = (servingSizes[addOn] || 1) * item.quantity;
-            addOnDeductions[addOn] = (addOnDeductions[addOn] || 0) + deduction;
+            requiredIngredients[addOn] = (requiredIngredients[addOn] || 0) + ((ADD_ON_SERVING_SIZES[addOn] || 1) * item.quantity);
           });
         }
       });
 
-      const addOnNames = Object.keys(addOnDeductions);
+      const ingredientNames = Object.keys(requiredIngredients);
 
-      if (addOnNames.length === 0) {
+      if (ingredientNames.length === 0) {
         await addDoc(collection(db, "orders"), orderPayload);
       } else {
-        const q = query(collection(db, "inventory"), where("name", "in", addOnNames));
+        const q = query(collection(db, "inventory"), where("name", "in", ingredientNames));
         const querySnapshot = await getDocs(q);
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const inventoryRefsToUpdate: { ref: any; deduction: number }[] = [];
+        const inventoryRefs: { ref: DocumentReference; name: string; needed: number }[] = [];
         querySnapshot.forEach(docSnap => {
-          const data = docSnap.data();
-          if (addOnDeductions[data.name]) {
-            inventoryRefsToUpdate.push({
-              ref: docSnap.ref,
-              deduction: addOnDeductions[data.name],
-            });
+          const data = docSnap.data() as InventoryItem;
+          if (requiredIngredients[data.name]) {
+            inventoryRefs.push({ ref: docSnap.ref, name: data.name, needed: requiredIngredients[data.name] });
           }
         });
 
         await runTransaction(db, async (transaction) => {
+          const outOfStockItems: string[] = [];
+          for (const item of inventoryRefs) {
+            const docSnap = await transaction.get(item.ref);
+            if (docSnap.exists()) {
+              const data = docSnap.data() as InventoryItem;
+              const currentStock = data.quantity || 0;
+              const unit = data.unit || "units";
+              if (currentStock < item.needed) {
+                outOfStockItems.push(`${item.name} (Need: ${item.needed}${unit}, Stock: ${currentStock}${unit})`);
+              }
+            }
+          }
+          if (outOfStockItems.length > 0) throw new Error(`OUT_OF_STOCK|${outOfStockItems.join(" | ")}`);
+
           const orderDocRef = doc(collection(db, "orders"));
           transaction.set(orderDocRef, orderPayload);
-          inventoryRefsToUpdate.forEach(({ ref, deduction }) => {
-            transaction.update(ref, { quantity: increment(-deduction) });
+          inventoryRefs.forEach(({ ref, needed }) => {
+            transaction.update(ref, { quantity: increment(-needed) });
           });
         });
       }
 
-      setLastTransaction({
-        number: transactionNumber,
-        method: paymentMethod,
-        total,
-        discountAmount,
-        amountTendered,
-        gcashRef: paymentMethod === "GCash" ? refNumber : undefined,
-      });
-      setOrderItems([]);
-      setDiscount("None");
-      setAmountTendered("");
-      setCashModal(false);
-      // ✅ FIX: GCash modal is now closed here (after Firestore confirms),
-      //         so the spinner stays visible the entire time it's processing.
-      setGcashRefModal(false);
-      setGcashRefNumber("");
-      setCheckoutMessage(null);
-      setIsSuccessModalOpen(true);
-      setDiscountCustomerName("");
-      setDiscountCustomerID("");
-    } catch (error) {
+      setLastTransaction({ number: transactionNumber, method: paymentMethod, total, discountAmount, amountTendered, gcashRef: paymentMethod === "GCash" ? refNumber : undefined });
+      setOrderItems([]); setDiscount("None"); setAmountTendered(""); setCashModal(false); setGcashRefModal(false);
+      setGcashRefNumber(""); setCheckoutMessage(null); setIsSuccessModalOpen(true); setDiscountCustomerName(""); setDiscountCustomerID("");
+
+    } catch (error: unknown) {
       console.error("Checkout failed:", error);
-      setCheckoutMessage("Checkout failed. Please try again.");
+      if (error instanceof Error && error.message && error.message.includes("OUT_OF_STOCK")) {
+        const missingItems = error.message.split("|").slice(1).join("\n• ");
+        setCheckoutMessage(`Transaction failed due to concurrent order. Missing:\n• ${missingItems}`);
+      } else {
+        setCheckoutMessage("Checkout failed. Please try again.");
+      }
     } finally {
       setIsProcessing(false);
     }
@@ -545,55 +661,32 @@ export default function POSLayout() {
 
   const handleKeyPress = (key: string) => {
     if (activeInput === "name") {
-      if (key === "BACKSPACE") {
-        setTempName(prev => prev.slice(0, -1));
-      } else if (key === "SPACE") {
-        setTempName(prev => prev + " ");
-      } else if (key === "CLEAR") {
-        setTempName("");
-      } else {
-        setTempName(prev => prev + key);
-      }
+      if (key === "BACKSPACE") setTempName(prev => prev.slice(0, -1));
+      else if (key === "SPACE") setTempName(prev => prev + " ");
+      else if (key === "CLEAR") setTempName("");
+      else setTempName(prev => prev + key);
     } else if (activeInput === "id") {
-      if (key === "BACKSPACE") {
-        setTempID(prev => prev.slice(0, -1));
-      } else if (key === "CLEAR") {
-        setTempID("");
-      } else if (/^[0-9]$/.test(key)) {
-        setTempID(prev => prev + key);
-      }
+      if (key === "BACKSPACE") setTempID(prev => prev.slice(0, -1));
+      else if (key === "CLEAR") setTempID("");
+      else if (/^[0-9]$/.test(key)) setTempID(prev => prev + key);
     }
   };
 
   const openDiscountModal = (discountType: "PWD" | "Senior") => {
-    setPendingDiscount(discountType);
-    setDiscountModal(true);
-    setTempName(discountCustomerName);
-    setTempID(discountCustomerID);
-    setActiveInput(null);
+    setPendingDiscount(discountType); setDiscountModal(true); setTempName(discountCustomerName); setTempID(discountCustomerID); setActiveInput(null);
   };
 
   const applyDiscount = () => {
     if (tempName.trim() && tempID.trim()) {
-      setDiscountCustomerName(tempName);
-      setDiscountCustomerID(tempID);
+      setDiscountCustomerName(tempName); setDiscountCustomerID(tempID);
       if (pendingDiscount) setDiscount(pendingDiscount);
-      setDiscountModal(false);
-      setPendingDiscount(null);
-      setActiveInput(null);
+      setDiscountModal(false); setPendingDiscount(null); setActiveInput(null);
     }
   };
 
   const cancelDiscount = () => {
-    setDiscountModal(false);
-    setPendingDiscount(null);
-    setActiveInput(null);
-    if (discount === "None") {
-      setDiscountCustomerName("");
-      setDiscountCustomerID("");
-      setTempName("");
-      setTempID("");
-    }
+    setDiscountModal(false); setPendingDiscount(null); setActiveInput(null);
+    if (discount === "None") { setDiscountCustomerName(""); setDiscountCustomerID(""); setTempName(""); setTempID(""); }
   };
 
   return (
@@ -609,7 +702,7 @@ export default function POSLayout() {
             </div>
             <div>
               <p className="text-white font-normal text-sm">{user?.displayName || "User"}</p>
-              <p className="text-xs" style={{ color: "#d4a97a" }}>Cashier1</p>
+              <p className="text-xs" style={{ color: "#d4a97a" }}>Cashier</p>
             </div>
           </div>
           <div className="flex items-center gap-4">
@@ -653,14 +746,17 @@ export default function POSLayout() {
                 : `No results for "${searchQuery}"`}
             </p>
             <div className="grid grid-cols-4 gap-4">
-              {searchResults.map((item, i) => (
+              {searchResults.map((item, i) => {
+                const isOOS = checkIsOOS(item);
+                return (
                 <div key={i} onClick={() => openProduct(item)}
-                  className="rounded-2xl p-5 cursor-pointer transition-all flex flex-col items-center justify-center gap-1"
-                  style={{ background: "white", border: "0.2px solid #e8ddd4", minHeight: "90px" }}>
-                  <p className="font-normal text-center" style={{ color: "#3b2212", fontSize: "18px" }}>{item}</p>
-                  {item === "Quesadillas" && <p className="text-xs" style={{ color: "#a07850" }}>Beef / Cheese</p>}
+                  className="rounded-2xl p-5 cursor-pointer transition-all flex flex-col items-center justify-center gap-1 relative overflow-hidden"
+                  style={{ background: isOOS ? "#fff0f0" : "white", border: isOOS ? "1.5px solid #f5c6c6" : "0.2px solid #e8ddd4", minHeight: "90px", opacity: isOOS ? 0.7 : 1 }}>
+                  <p className="font-normal text-center" style={{ color: isOOS ? "#c0392b" : "#3b2212", fontSize: "18px" }}>{item}</p>
+                  {isOOS && <p className="text-[10px] font-bold px-2 py-0.5 rounded-full mt-1" style={{ background: "#c0392b", color: "white" }}>OUT OF STOCK</p>}
+                  {item === "Quesadillas" && <p className="text-xs" style={{ color: isOOS ? "#d98880" : "#a07850" }}>Beef / Cheese</p>}
                 </div>
-              ))}
+              )})}
             </div>
           </>
         ) : (
@@ -710,35 +806,44 @@ export default function POSLayout() {
 
             <div className="grid grid-cols-4 gap-4">
               {activeCategory !== "Frappe" && activeCategory !== "Food & Bites" &&
-                products[activeCategory as keyof typeof products]?.map((item, i) => (
+                products[activeCategory as keyof typeof products]?.map((item, i) => {
+                  const isOOS = checkIsOOS(item);
+                  return (
                   <div key={i} onClick={() => openProduct(item)}
-                    className="rounded-2xl p-5 cursor-pointer transition-all flex flex-col items-center justify-center gap-1"
-                    style={{ background: "white", border: "0.2px solid #e8ddd4", minHeight: "90px" }}>
-                    <p className="font-normal text-center" style={{ color: "#3b2212", fontSize: "18px" }}>{item}</p>
+                    className="rounded-2xl p-5 cursor-pointer transition-all flex flex-col items-center justify-center gap-1 relative overflow-hidden"
+                    style={{ background: isOOS ? "#fff0f0" : "white", border: isOOS ? "1.5px solid #f5c6c6" : "0.2px solid #e8ddd4", minHeight: "90px", opacity: isOOS ? 0.7 : 1 }}>
+                    <p className="font-normal text-center" style={{ color: isOOS ? "#c0392b" : "#3b2212", fontSize: "18px" }}>{item}</p>
+                    {isOOS && <p className="text-[10px] font-bold px-2 py-0.5 rounded-full mt-1" style={{ background: "#c0392b", color: "white" }}>OUT OF STOCK</p>}
                   </div>
-                ))}
+                )})}
 
               {activeCategory === "Frappe" && activeFrappeType &&
-                frappeProducts[activeFrappeType as keyof typeof frappeProducts]?.map((item, i) => (
+                frappeProducts[activeFrappeType as keyof typeof frappeProducts]?.map((item, i) => {
+                  const isOOS = checkIsOOS(item);
+                  return (
                   <div key={i} onClick={() => openProduct(item)}
-                    className="rounded-2xl p-5 cursor-pointer transition-all flex flex-col items-center justify-center gap-1"
-                    style={{ background: "white", border: "0.2px solid #e8ddd4", minHeight: "90px" }}>
-                    <p className="font-normal text-center" style={{ color: "#3b2212", fontSize: "18px" }}>{item}</p>
+                    className="rounded-2xl p-5 cursor-pointer transition-all flex flex-col items-center justify-center gap-1 relative overflow-hidden"
+                    style={{ background: isOOS ? "#fff0f0" : "white", border: isOOS ? "1.5px solid #f5c6c6" : "0.2px solid #e8ddd4", minHeight: "90px", opacity: isOOS ? 0.7 : 1 }}>
+                    <p className="font-normal text-center" style={{ color: isOOS ? "#c0392b" : "#3b2212", fontSize: "18px" }}>{item}</p>
+                    {isOOS && <p className="text-[10px] font-bold px-2 py-0.5 rounded-full mt-1" style={{ background: "#c0392b", color: "white" }}>OUT OF STOCK</p>}
                   </div>
-                ))}
+                )})}
 
               {activeCategory === "Food & Bites" && activeFoodSubCategory &&
                 (activeFoodSubCategory === "All"
                   ? Object.values(foodProducts).flat()
                   : foodProducts[activeFoodSubCategory]
-                )?.map((item, i) => (
+                )?.map((item, i) => {
+                  const isOOS = checkIsOOS(item);
+                  return (
                   <div key={i} onClick={() => openProduct(item)}
-                    className="rounded-2xl p-5 cursor-pointer transition-all flex flex-col items-center justify-center gap-1"
-                    style={{ background: "white", border: "0.2px solid #e8ddd4", minHeight: "90px" }}>
-                    <p className="font-normal text-center" style={{ color: "#3b2212", fontSize: "18px" }}>{item}</p>
-                    {item === "Quesadillas" && <p className="text-xs" style={{ color: "#a07850" }}>Beef / Cheese</p>}
+                    className="rounded-2xl p-5 cursor-pointer transition-all flex flex-col items-center justify-center gap-1 relative overflow-hidden"
+                    style={{ background: isOOS ? "#fff0f0" : "white", border: isOOS ? "1.5px solid #f5c6c6" : "0.2px solid #e8ddd4", minHeight: "90px", opacity: isOOS ? 0.7 : 1 }}>
+                    <p className="font-normal text-center" style={{ color: isOOS ? "#c0392b" : "#3b2212", fontSize: "18px" }}>{item}</p>
+                    {isOOS && <p className="text-[10px] font-bold px-2 py-0.5 rounded-full mt-1" style={{ background: "#c0392b", color: "white" }}>OUT OF STOCK</p>}
+                    {item === "Quesadillas" && <p className="text-xs" style={{ color: isOOS ? "#d98880" : "#a07850" }}>Beef / Cheese</p>}
                   </div>
-                ))}
+                )})}
             </div>
           </>
         )}
@@ -907,9 +1012,14 @@ export default function POSLayout() {
         </div>
 
         {checkoutMessage && (
-          <p className="text-center text-sm mt-2" style={{ color: checkoutMessage.includes("failed") ? "#c0392b" : "#2d7a38" }}>
-            {checkoutMessage}
-          </p>
+          <div className="mt-3 p-3 rounded-xl border whitespace-pre-line" 
+            style={{ 
+              background: checkoutMessage.includes("failed") || checkoutMessage.includes("Out of Stock") ? "#fff0f0" : "#f0faf0",
+              borderColor: checkoutMessage.includes("failed") || checkoutMessage.includes("Out of Stock") ? "#f5c6c6" : "#b6e2b6",
+              color: checkoutMessage.includes("failed") || checkoutMessage.includes("Out of Stock") ? "#c0392b" : "#2d7a38"
+            }}>
+            <p className="text-sm font-medium">{checkoutMessage}</p>
+          </div>
         )}
       </div>
 
@@ -1285,10 +1395,6 @@ export default function POSLayout() {
                 Cancel
               </button>
 
-              {/* ✅ FIX: onClick now only calls processCheckout.
-                   setGcashRefModal(false) and setGcashRefNumber("") have been moved
-                   inside processCheckout (in the success block above), so the spinner
-                   stays visible the entire time Firestore is processing. */}
               <button
                 disabled={gcashRefNumber.trim().length < 13 || isProcessing}
                 onClick={() => processCheckout("GCash", gcashRefNumber.trim())}
@@ -1479,14 +1585,29 @@ export default function POSLayout() {
                 </div>
               )}
 
+              {currentMissingIngredients.length > 0 && (
+                 <div className="mt-2 mb-4 p-4 rounded-xl border" 
+                 style={{ background: "#fff0f0", borderColor: "#f5c6c6", color: "#c0392b" }}>
+                 <p className="text-sm font-bold mb-2">Item Unavailable. Missing Ingredients:</p>
+                 <ul className="text-xs list-disc pl-5 space-y-1">
+                   {currentMissingIngredients.map((err, idx) => (
+                     <li key={idx}>{err}</li>
+                   ))}
+                 </ul>
+               </div>
+              )}
+
               <button
-                disabled={selectedProduct === "Quesadillas" && !selectedVariant}
+                disabled={(selectedProduct === "Quesadillas" && !selectedVariant) || currentMissingIngredients.length > 0}
                 onClick={handleAddToOrder}
-                className="w-full py-3 rounded-xl font-normal text-base transition-all"
-                style={selectedProduct === "Quesadillas" && !selectedVariant
+                className="w-full py-4 rounded-xl font-bold text-lg transition-all"
+                style={
+                  currentMissingIngredients.length > 0 
+                  ? { background: "#e8e0d8", color: "#c0392b", cursor: "not-allowed" } : 
+                  (selectedProduct === "Quesadillas" && !selectedVariant)
                   ? { background: "#e8e0d8", color: "#b09070", cursor: "not-allowed" }
                   : { background: "#3b2212", color: "white" }}>
-                Add to Order — ₱{modalPrice.toFixed(0)}
+                {currentMissingIngredients.length > 0 ? "Out of Stock" : `Add to Order — ₱${modalPrice.toFixed(0)}`}
               </button>
             </div>
           </div>
