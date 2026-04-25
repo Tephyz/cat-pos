@@ -20,7 +20,7 @@ export default function SigninPage() {
 
   useEffect(() => {
     if (user) {
-      router.push("/homepage");
+      router.push("/dashboard");
     }
   }, [user, router]);
 
@@ -42,7 +42,7 @@ export default function SigninPage() {
 
     try {
       await signIn(form.email, form.password);
-      router.push("/homepage");
+      router.push("/dashboard");
     } catch (err: any) {
       setError(err.message || "Failed to sign in");
     } finally {
