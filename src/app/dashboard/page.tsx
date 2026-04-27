@@ -47,6 +47,374 @@ const frappeSubColors: Record<string, { bg: string; hoverBg: string; activeBg: s
   "Tea Based":    { bg: "#D1C4E9", hoverBg: "#B39DDB", activeBg: "#4527A0", text: "#311B92" },     // Deep Indigo/Purple
 };
 
+// Delete Confirmation Modal Component
+function DeleteConfirmModal({ 
+  isOpen, 
+  onClose, 
+  onConfirm, 
+  itemName, 
+  itemType 
+}: { 
+  isOpen: boolean; 
+  onClose: () => void; 
+  onConfirm: () => void; 
+  itemName: string; 
+  itemType: "category" | "item";
+}) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-[60] p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+        <h3 className="text-xl font-bold mb-3" style={{ color: "#3b2212" }}>
+          Delete {itemType === "category" ? "Category" : "Item"}
+        </h3>
+        <p className="text-base mb-6" style={{ color: "#a07850" }}>
+          Are you sure you want to delete "{itemName}"? 
+          {itemType === "category" && " All items in this category will also be deleted."}
+          This action cannot be undone.
+        </p>
+        <div className="flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 py-3 rounded-xl font-semibold text-base transition-all active:scale-95"
+            style={{ background: "#f0e8e0", color: "#3b2212" }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="flex-1 py-3 rounded-xl font-semibold text-base transition-all active:scale-95"
+            style={{ background: "#c0392b", color: "white" }}
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Manage Modal Component
+function ManageModal({ 
+  isOpen, 
+  onClose, 
+  onAddCategory, 
+  onAddItem, 
+  onDeleteCategory,
+  onDeleteItem,
+  categories,
+  itemsByCategory
+}: { 
+  isOpen: boolean; 
+  onClose: () => void; 
+  onAddCategory: (categoryName: string) => void; 
+  onAddItem: (item: { name: string; price: number; color: string; category: string }) => void;
+  onDeleteCategory: (categoryName: string) => void;
+  onDeleteItem: (categoryName: string, itemName: string) => void;
+  categories: string[];
+  itemsByCategory: Record<string, string[]>;
+}) {
+  const [activeTab, setActiveTab] = useState<"category" | "item">("category");
+  const [categoryName, setCategoryName] = useState("");
+  const [itemName, setItemName] = useState("");
+  const [itemPrice, setItemPrice] = useState("");
+  const [itemColor, setItemColor] = useState("#3b2212");
+  const [selectedCategory, setSelectedCategory] = useState(categories[0] || "Coffee");
+  const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
+  
+  // Delete confirmation states
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    isOpen: boolean;
+    type: "category" | "item";
+    name: string;
+    category?: string;
+  }>({ isOpen: false, type: "category", name: "" });
+
+  if (!isOpen) return null;
+
+  const handleAddCategory = () => {
+    if (!categoryName.trim()) {
+      setMessage({ text: "Please enter a category name", type: "error" });
+      return;
+    }
+    if (categories.includes(categoryName.trim())) {
+      setMessage({ text: "Category already exists!", type: "error" });
+      return;
+    }
+    onAddCategory(categoryName.trim());
+    setMessage({ text: `Category "${categoryName}" added!`, type: "success" });
+    setCategoryName("");
+    setTimeout(() => setMessage(null), 2000);
+  };
+
+  const handleAddItem = () => {
+    if (!itemName.trim()) {
+      setMessage({ text: "Please enter an item name", type: "error" });
+      return;
+    }
+    if (!itemPrice || parseFloat(itemPrice) <= 0) {
+      setMessage({ text: "Please enter a valid price", type: "error" });
+      return;
+    }
+    // Check if item already exists in the category
+    if (itemsByCategory[selectedCategory]?.includes(itemName.trim())) {
+      setMessage({ text: `Item "${itemName}" already exists in ${selectedCategory}!`, type: "error" });
+      return;
+    }
+    onAddItem({
+      name: itemName.trim(),
+      price: parseFloat(itemPrice),
+      color: itemColor,
+      category: selectedCategory,
+    });
+    setMessage({ text: `Item "${itemName}" added to ${selectedCategory}!`, type: "success" });
+    setItemName("");
+    setItemPrice("");
+    setItemColor("#3b2212");
+    setTimeout(() => setMessage(null), 2000);
+  };
+
+  const handleDeleteClick = (type: "category" | "item", name: string, category?: string) => {
+    setDeleteConfirm({ isOpen: true, type, name, category });
+  };
+
+  const handleConfirmDelete = () => {
+    if (deleteConfirm.type === "category") {
+      onDeleteCategory(deleteConfirm.name);
+    } else if (deleteConfirm.type === "item" && deleteConfirm.category) {
+      onDeleteItem(deleteConfirm.category, deleteConfirm.name);
+    }
+    setDeleteConfirm({ isOpen: false, type: "category", name: "" });
+    setMessage({ text: `${deleteConfirm.type === "category" ? "Category" : "Item"} deleted!`, type: "success" });
+    setTimeout(() => setMessage(null), 2000);
+  };
+
+  return (
+    <>
+      <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-50 p-4">
+        <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl" style={{ maxHeight: "90vh", overflow: "auto" }}>
+          <div className="p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-2xl font-bold" style={{ color: "#3b2212" }}>Manage Menu</h2>
+              <button
+                onClick={onClose}
+                className="w-10 h-10 rounded-full flex items-center justify-center text-xl"
+                style={{ background: "#f7f3ef", color: "#3b2212", border: "1px solid #e8ddd4" }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Tab Switcher */}
+            <div className="flex gap-2 mb-6 border-b border-[#e8ddd4]">
+              <button
+                onClick={() => { setActiveTab("category"); setMessage(null); }}
+                className={`px-6 py-3 font-semibold transition-all ${
+                  activeTab === "category"
+                    ? "border-b-2 border-[#3b2212] text-[#3b2212]"
+                    : "text-[#a07850] hover:text-[#3b2212]"
+                }`}
+              >
+                Add Category
+              </button>
+              <button
+                onClick={() => { setActiveTab("item"); setMessage(null); }}
+                className={`px-6 py-3 font-semibold transition-all ${
+                  activeTab === "item"
+                    ? "border-b-2 border-[#3b2212] text-[#3b2212]"
+                    : "text-[#a07850] hover:text-[#3b2212]"
+                }`}
+              >
+                Add Item
+              </button>
+            </div>
+
+            {/* Category Form */}
+            {activeTab === "category" && (
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>
+                    Category Name
+                  </label>
+                  <input
+                    type="text"
+                    value={categoryName}
+                    onChange={(e) => setCategoryName(e.target.value)}
+                    placeholder="e.g., Smoothies, Iced Tea, Pastries"
+                    className="w-full rounded-xl px-4 py-3 text-base outline-none"
+                    style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
+                    onKeyPress={(e) => e.key === "Enter" && handleAddCategory()}
+                  />
+                </div>
+                <button
+                  onClick={handleAddCategory}
+                  className="w-full py-3 rounded-xl font-semibold text-lg transition-all active:scale-95 touch-manipulation"
+                  style={{ background: "#3b2212", color: "white" }}
+                >
+                  + Add Category
+                </button>
+
+                {/* List of existing categories with delete buttons */}
+                <div className="mt-6 pt-4 border-t" style={{ borderColor: "#e8ddd4" }}>
+                  <h3 className="text-md font-semibold mb-3" style={{ color: "#3b2212" }}>
+                    Existing Categories
+                  </h3>
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {categories.map((cat) => (
+                      <div
+                        key={cat}
+                        className="flex justify-between items-center p-3 rounded-xl"
+                        style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4" }}
+                      >
+                        <span className="text-sm font-medium" style={{ color: "#3b2212" }}>{cat}</span>
+                        <button
+                          onClick={() => handleDeleteClick("category", cat)}
+                          className="px-3 py-1.5 rounded-lg text-sm font-semibold transition-all active:scale-95"
+                          style={{ background: "#fee2e2", color: "#c0392b" }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Item Form */}
+            {activeTab === "item" && (
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>
+                    Select Category
+                  </label>
+                  <select
+                    value={selectedCategory}
+                    onChange={(e) => setSelectedCategory(e.target.value)}
+                    className="w-full rounded-xl px-4 py-3 text-base outline-none"
+                    style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
+                  >
+                    {categories.map((cat) => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>
+                    Product Name
+                  </label>
+                  <input
+                    type="text"
+                    value={itemName}
+                    onChange={(e) => setItemName(e.target.value)}
+                    placeholder="e.g., Mango Smoothie"
+                    className="w-full rounded-xl px-4 py-3 text-base outline-none"
+                    style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>
+                    Price (₱)
+                  </label>
+                  <input
+                    type="number"
+                    value={itemPrice}
+                    onChange={(e) => setItemPrice(e.target.value)}
+                    placeholder="e.g., 150"
+                    className="w-full rounded-xl px-4 py-3 text-base outline-none"
+                    style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>
+                    Card Color
+                  </label>
+                  <div className="flex gap-3 items-center">
+                    <input
+                      type="color"
+                      value={itemColor}
+                      onChange={(e) => setItemColor(e.target.value)}
+                      className="w-16 h-12 rounded-lg cursor-pointer"
+                      style={{ border: "1.5px solid #e8ddd4" }}
+                    />
+                    <span className="text-sm" style={{ color: "#a07850" }}>
+                      Choose a color for the product card
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleAddItem}
+                  className="w-full py-3 rounded-xl font-semibold text-lg transition-all active:scale-95 touch-manipulation"
+                  style={{ background: "#3b2212", color: "white" }}
+                >
+                  + Add Item
+                </button>
+
+                {/* List of existing items in selected category with delete buttons */}
+                <div className="mt-6 pt-4 border-t" style={{ borderColor: "#e8ddd4" }}>
+                  <h3 className="text-md font-semibold mb-3" style={{ color: "#3b2212" }}>
+                    Items in "{selectedCategory}"
+                  </h3>
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {itemsByCategory[selectedCategory]?.length > 0 ? (
+                      itemsByCategory[selectedCategory].map((item) => (
+                        <div
+                          key={item}
+                          className="flex justify-between items-center p-3 rounded-xl"
+                          style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4" }}
+                        >
+                          <span className="text-sm font-medium" style={{ color: "#3b2212" }}>{item}</span>
+                          <button
+                            onClick={() => handleDeleteClick("item", item, selectedCategory)}
+                            className="px-3 py-1.5 rounded-lg text-sm font-semibold transition-all active:scale-95"
+                            style={{ background: "#fee2e2", color: "#c0392b" }}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-sm text-center py-4" style={{ color: "#c0b090" }}>
+                        No items in this category yet
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Message Display */}
+            {message && (
+              <div
+                className={`mt-4 p-3 rounded-xl text-center ${
+                  message.type === "success" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"
+                }`}
+                style={{ border: `1.5px solid ${message.type === "success" ? "#b6e2b6" : "#f5c6c6"}` }}
+              >
+                {message.text}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Delete Confirmation Modal */}
+      <DeleteConfirmModal
+        isOpen={deleteConfirm.isOpen}
+        onClose={() => setDeleteConfirm({ isOpen: false, type: "category", name: "" })}
+        onConfirm={handleConfirmDelete}
+        itemName={deleteConfirm.name}
+        itemType={deleteConfirm.type}
+      />
+    </>
+  );
+}
+
 export default function POSLayout() {
   const { user, loading, logout } = useAuth();
   const router = useRouter();
@@ -100,6 +468,12 @@ export default function POSLayout() {
   const [confirmModal, setConfirmModal] = useState<{ open: boolean; method: "Cash" | "GCash" | null }>({ open: false, method: null });
   const [cashModal, setCashModal] = useState(false);
   const [gcashRefModal, setGcashRefModal] = useState(false);
+  const [isManageModalOpen, setIsManageModalOpen] = useState(false);
+
+  // Dynamic products state
+  const [dynamicProducts, setDynamicProducts] = useState<Record<string, string[]>>({});
+  const [dynamicPrices, setDynamicPrices] = useState<Record<string, { M: number; L: number }>>({});
+  const [dynamicItemColors, setDynamicItemColors] = useState<Record<string, { bg: string; activeBg: string; text: string }>>({});
 
   // Updated: name + number instead of ref number
   const [gcashName, setGcashName] = useState("");
@@ -260,6 +634,9 @@ export default function POSLayout() {
     "Food & Bites": [],
   };
 
+  // Merge static and dynamic products
+  const allProducts = { ...products, ...dynamicProducts };
+
   const frappeProducts = {
     "Coffee Based": ["Java Chip", "Coffee Jelly", "Dark Mocha", "Caramel"],
     "Cream Based": ["Vanilla", "Cookies & Cream", "Strawberries & Cream", "Blue Berries & Cream", "Choco Chip", "Caramel", "Salted Caramel"],
@@ -385,8 +762,128 @@ export default function POSLayout() {
 
   const ADD_ON_PRICE = 30;
 
+  // Function to add a new category
+  const handleAddCategory = (categoryName: string) => {
+    setDynamicProducts(prev => ({
+      ...prev,
+      [categoryName]: []
+    }));
+    // Add to categoryColors with default colors
+    if (!categoryColors[categoryName]) {
+      categoryColors[categoryName] = { bg: "#f5f5f5", hoverBg: "#eeeeee", activeBg: "#3b2212", text: "#6b4c30" };
+    }
+  };
+
+  // Function to add a new item
+  const handleAddItem = (item: { name: string; price: number; color: string; category: string }) => {
+    // Add to products
+    setDynamicProducts(prev => ({
+      ...prev,
+      [item.category]: [...(prev[item.category] || []), item.name]
+    }));
+    
+    // Add to prices (Medium and Large)
+    setDynamicPrices(prev => ({
+      ...prev,
+      [item.name]: { M: item.price, L: item.price + 20 }
+    }));
+    
+    // Add custom color for this item
+    const color = item.color;
+    setDynamicItemColors(prev => ({
+      ...prev,
+      [item.name]: { 
+        bg: `${color}20`, 
+        activeBg: color,
+        text: color 
+      }
+    }));
+  };
+
+  // Delete a category
+  const handleDeleteCategory = (categoryName: string) => {
+    // Don't allow deletion of default categories (optional - remove if you want to allow deletion of all)
+    const defaultCategories = ["Coffee", "Non Coffee", "Milktea", "Yakult Mix", "Fruit Tea", "Hot Tea", "Frappe", "Food & Bites"];
+    if (defaultCategories.includes(categoryName)) {
+      alert("Cannot delete default categories!");
+      return;
+    }
+    
+    // Remove category from dynamic products
+    const itemsToRemove = [...(dynamicProducts[categoryName] || [])];
+    
+    setDynamicProducts(prev => {
+      const newProducts = { ...prev };
+      delete newProducts[categoryName];
+      return newProducts;
+    });
+    
+    // Remove all items from this category from dynamic prices
+    setDynamicPrices(prev => {
+      const newPrices = { ...prev };
+      itemsToRemove.forEach(item => {
+        delete newPrices[item];
+      });
+      return newPrices;
+    });
+    
+    // Remove item colors
+    setDynamicItemColors(prev => {
+      const newColors = { ...prev };
+      itemsToRemove.forEach(item => {
+        delete newColors[item];
+      });
+      return newColors;
+    });
+  };
+
+  // Delete an item
+  const handleDeleteItem = (categoryName: string, itemName: string) => {
+    // Don't allow deletion of default items (optional)
+    const defaultItems = [
+      "Americano", "Cappuccino", "Hazelnut", "Caramel Macchiato", "Mocha", "Spanish Latte", "Salted Caramel Latte", "Dirty Matcha", "Vanilla Latte",
+      "Choco", "Dark Choco", "Matcha latte", "Salted Caramel", "Caramel",
+      "Wintermelon", "Okinawa", "Dark Choco", "Capuccino",
+      "Liempo", "Leg Quarters", "French Fries", "Chicken Fingers", "Nachos", "Quesadillas",
+      "Burger", "Cheese Burger", "Ham & Cheese", "French Toast", "Waffle", "Pancake",
+      "Cheesecake", "Empanada", "Muffin", "Cookies", "Popcorn", "Pancake (Dessert)",
+      "Tapa", "Bangus", "Spam", "Hotdog", "Ham", "Longganisa", "Spaghetti", "Tuna Pesto", "Vegetable Salad"
+    ];
+    
+    if (defaultItems.includes(itemName)) {
+      alert("Cannot delete default items!");
+      return;
+    }
+    
+    // Remove item from category
+    setDynamicProducts(prev => ({
+      ...prev,
+      [categoryName]: prev[categoryName]?.filter(item => item !== itemName) || []
+    }));
+    
+    // Remove price for this item
+    setDynamicPrices(prev => {
+      const newPrices = { ...prev };
+      delete newPrices[itemName];
+      return newPrices;
+    });
+    
+    // Remove color for this item
+    setDynamicItemColors(prev => {
+      const newColors = { ...prev };
+      delete newColors[itemName];
+      return newColors;
+    });
+  };
+
   const getDrinkPrice = (productName: string, size: string, category: string, frappeType: string | null): number => {
-    const s = size === "Large" || size === "Pot" || size === "Pot" ? "L" : "M";
+    const s = size === "Large" || size === "Pot" ? "L" : "M";
+    
+    // Check dynamic prices first
+    if (dynamicPrices[productName]) {
+      return dynamicPrices[productName][s as "M"|"L"] ?? dynamicPrices[productName]["M"] ?? 150;
+    }
+    
     switch (category) {
       case "Coffee":
         return coffeePrices[productName]?.[s as "M"|"L"] ?? 150;
@@ -422,11 +919,9 @@ export default function POSLayout() {
   const quesadillasVariants = ["Beef", "Cheese"];
   const addOns = ["Espresso", "Coffee Jelly", "Oreo", "Caramel", "Pearl", "Nata", "Whip Cream"];
 
-  // ── SEARCH FIX ──────────────────────────────────────────────────────────────
-  // Build a flat list of { name, category } pairs WITHOUT deduplication,
-  // so identical product names in different categories all appear in results.
+  // Build a flat list of { name, category } pairs including dynamic products
   const allProductEntries: { name: string; category: string }[] = [
-    ...Object.entries(products).flatMap(([cat, items]) =>
+    ...Object.entries(allProducts).flatMap(([cat, items]) =>
       (items as string[]).map(name => ({ name, category: cat }))
     ),
     ...Object.entries(frappeProducts).flatMap(([sub, items]) =>
@@ -442,7 +937,6 @@ export default function POSLayout() {
         entry.name.toLowerCase().includes(searchQuery.toLowerCase())
       )
     : [];
-  // ────────────────────────────────────────────────────────────────────────────
 
   const isSearching = searchQuery.trim().length > 0;
 
@@ -683,6 +1177,17 @@ export default function POSLayout() {
     const parts = category.split(" · ");
     const topLevel = parts[0];
     const sub = parts[1];
+    
+    // Check if it's a dynamic item with custom color
+    if (dynamicItemColors[category]) {
+      return {
+        bg: dynamicItemColors[category].bg,
+        hoverBg: dynamicItemColors[category].bg,
+        activeBg: dynamicItemColors[category].activeBg,
+        text: dynamicItemColors[category].text,
+      };
+    }
+    
     // Frappe subcategories get their own distinct color
     if (topLevel === "Frappe" && sub && frappeSubColors[sub]) {
       return frappeSubColors[sub];
@@ -737,6 +1242,9 @@ export default function POSLayout() {
     setActiveInput(null);
   };
 
+  // Get all categories for the manage modal (excluding Frappe subcategories and Food & Bites subcategories)
+  const allCategories = Object.keys(allProducts);
+
   if (loading) return <div>Loading...</div>;
   if (!user) return <div>Redirecting to login...</div>;
 
@@ -746,75 +1254,92 @@ export default function POSLayout() {
       <div className="flex-1 flex flex-col h-full min-w-0" style={{ background: "#ede8e3" }}>
         {/* Tab Bar - FIXED at top, never scrolls away */}
         <div className="flex-shrink-0 px-5 pt-5 pb-2">
-          <div 
-            ref={tabsContainerRef}
-            className="flex items-center gap-1 pb-2 overflow-x-auto"
-            style={{ 
-              borderBottom: "2px solid #e8ddd4",
-              scrollbarWidth: "thin",
-            }}
-          >
-            {tabs.map((tab) => (
-              <div
-                key={tab.id}
-                onClick={() => setActiveTabId(tab.id)}
-                className={`group flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all shrink-0 ${
-                  activeTabId === tab.id 
-                    ? "bg-[#3b2212] text-white shadow-sm" 
-                    : "bg-white text-[#6b4c30] border border-[#e8ddd4] hover:bg-[#f5efe8]"
-                }`}
-              >
-                {editingTabId === tab.id ? (
-                  <input
-                    type="text"
-                    value={editingTabName}
-                    onChange={(e) => setEditingTabName(e.target.value)}
-                    onBlur={saveTabName}
-                    onKeyDown={handleTabNameKeyDown}
-                    className="text-sm font-medium bg-transparent outline-none border-b-2 border-white px-1 min-w-[80px] text-white"
-                    autoFocus
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                ) : (
-                  <>
-                    <span className="text-sm font-medium truncate" style={{ maxWidth: "100px" }}>
-                      {tab.name}
-                    </span>
-                    {tab.orderItems.length > 0 && (
-                      <span className={`text-xs px-1.5 py-0.5 rounded-full shrink-0 ${
-                        activeTabId === tab.id 
-                          ? "bg-white text-[#3b2212]" 
-                          : "bg-[#3b2212] text-white"
-                      }`}>
-                        {tab.orderItems.length}
-                      </span>
-                    )}
-                    <button
-                      onClick={(e) => startEditingTabName(tab.id, tab.name, e)}
-                      className="opacity-0 group-hover:opacity-100 text-xs px-1 hover:bg-black/10 rounded transition-all shrink-0"
-                    >
-                      ✎
-                    </button>
-                    <button
-                      onClick={(e) => closeTab(tab.id, e)}
-                      className="opacity-0 group-hover:opacity-100 text-xs px-1 hover:bg-black/10 rounded transition-all shrink-0"
-                    >
-                      ✕
-                    </button>
-                  </>
-                )}
-              </div>
-            ))}
-            
-            {/* New Tab Button */}
-            <button
-              onClick={createNewTab}
-              className="shrink-0 px-4 py-2 rounded-lg text-sm font-medium transition-all hover:bg-[#e8e0d8] border border-[#e8ddd4] bg-white whitespace-nowrap"
-              style={{ color: "#5a3d28" }}
-              title="New customer tab"
+          <div className="flex justify-between items-center mb-2">
+            <div 
+              ref={tabsContainerRef}
+              className="flex items-center gap-1 pb-2 overflow-x-auto flex-1"
+              style={{ 
+                borderBottom: "2px solid #e8ddd4",
+                scrollbarWidth: "thin",
+              }}
             >
-              + New Tab
-            </button>
+              {tabs.map((tab) => (
+                <div
+                  key={tab.id}
+                  onClick={() => setActiveTabId(tab.id)}
+                  className={`group flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all shrink-0 ${
+                    activeTabId === tab.id 
+                      ? "bg-[#3b2212] text-white shadow-sm" 
+                      : "bg-white text-[#6b4c30] border border-[#e8ddd4] hover:bg-[#f5efe8]"
+                  }`}
+                >
+                  {editingTabId === tab.id ? (
+                    <input
+                      type="text"
+                      value={editingTabName}
+                      onChange={(e) => setEditingTabName(e.target.value)}
+                      onBlur={saveTabName}
+                      onKeyDown={handleTabNameKeyDown}
+                      className="text-sm font-medium bg-transparent outline-none border-b-2 border-white px-1 min-w-[80px] text-white"
+                      autoFocus
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  ) : (
+                    <>
+                      <span className="text-sm font-medium truncate" style={{ maxWidth: "100px" }}>
+                        {tab.name}
+                      </span>
+                      {tab.orderItems.length > 0 && (
+                        <span className={`text-xs px-1.5 py-0.5 rounded-full shrink-0 ${
+                          activeTabId === tab.id 
+                            ? "bg-white text-[#3b2212]" 
+                            : "bg-[#3b2212] text-white"
+                        }`}>
+                          {tab.orderItems.length}
+                        </span>
+                      )}
+                      <button
+                        onClick={(e) => startEditingTabName(tab.id, tab.name, e)}
+                        className="opacity-0 group-hover:opacity-100 text-xs px-1 hover:bg-black/10 rounded transition-all shrink-0"
+                      >
+                        ✎
+                      </button>
+                      <button
+                        onClick={(e) => closeTab(tab.id, e)}
+                        className="opacity-0 group-hover:opacity-100 text-xs px-1 hover:bg-black/10 rounded transition-all shrink-0"
+                      >
+                        ✕
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))}
+              
+              {/* New Tab Button */}
+              <button
+                onClick={createNewTab}
+                className="shrink-0 px-4 py-2 rounded-lg text-sm font-medium transition-all hover:bg-[#e8e0d8] border border-[#e8ddd4] bg-white whitespace-nowrap"
+                style={{ color: "#5a3d28" }}
+                title="New customer tab"
+              >
+                + New Tab
+              </button>
+            </div>
+            
+            {/* Manage Menu Button */}
+<button
+  onClick={() => setIsManageModalOpen(true)}
+  className="shrink-0 ml-3 px-4 py-2 rounded-lg text-sm font-medium transition-all hover:bg-[#e8e0d8] border border-[#e8ddd4] bg-white whitespace-nowrap flex items-center gap-2"
+  style={{ color: "#5a3d28" }}
+  title="Manage Categories & Items"
+>
+  <img 
+    src="/settings.png" 
+    alt="Menu Icon" 
+    className="w-5 h-5"
+  />
+  Manage Menu
+</button>
           </div>
         </div>
 
@@ -873,7 +1398,7 @@ export default function POSLayout() {
           ) : (
             <>
               <div className="flex gap-2 mb-4 flex-wrap">
-                {Object.keys(products).map((cat) => {
+                {Object.keys(allProducts).map((cat) => {
                   const colors = categoryColors[cat] || { bg: "#f5f5f5", hoverBg: "#eeeeee", activeBg: "#3b2212", text: "#6b4c30" };
                   return (
                     <button
@@ -948,8 +1473,11 @@ export default function POSLayout() {
 
               <div className="grid grid-cols-4 gap-4">
                 {activeCategory !== "Frappe" && activeCategory !== "Food & Bites" &&
-                  products[activeCategory as keyof typeof products]?.map((item, i) => {
+                  allProducts[activeCategory]?.map((item, i) => {
                     const colors = categoryColors[activeCategory] ?? { bg: "#f5f5f5", hoverBg: "#eeeeee", activeBg: "#3b2212", text: "#6b4c30" };
+                    // Check if this item has custom colors
+                    const itemColors = dynamicItemColors[item];
+                    const cardColors = itemColors || colors;
                     return (
                       <div key={i} onClick={() => {
                         setSelectedProduct(item);
@@ -957,8 +1485,8 @@ export default function POSLayout() {
                         setSelectedProductCategory(activeCategory);
                       }}
                         className="rounded-2xl p-5 cursor-pointer transition-all active:scale-95 touch-manipulation flex flex-col items-center justify-center gap-1"
-                        style={{ background: colors.bg, border: `1.5px solid ${colors.hoverBg}`, minHeight: "100px" }}>
-                        <p className="font-normal text-center" style={{ color: colors.activeBg, fontSize: "18px" }}>{item}</p>
+                        style={{ background: cardColors.bg, border: `1.5px solid ${cardColors.hoverBg || colors.hoverBg}`, minHeight: "100px" }}>
+                        <p className="font-normal text-center" style={{ color: cardColors.activeBg, fontSize: "18px" }}>{item}</p>
                       </div>
                     );
                   })}
@@ -1179,6 +1707,18 @@ export default function POSLayout() {
           )}
         </div>
       </div>
+
+      {/* Manage Modal */}
+      <ManageModal
+        isOpen={isManageModalOpen}
+        onClose={() => setIsManageModalOpen(false)}
+        onAddCategory={handleAddCategory}
+        onAddItem={handleAddItem}
+        onDeleteCategory={handleDeleteCategory}
+        onDeleteItem={handleDeleteItem}
+        categories={allCategories}
+        itemsByCategory={allProducts}
+      />
 
       {/* Discount Modal */}
       {discountModal && (
