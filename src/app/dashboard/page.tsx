@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
-import { collection, addDoc, serverTimestamp, runTransaction, doc, increment, query, where, getDocs } from "firebase/firestore";
+import { collection, addDoc, serverTimestamp, runTransaction, doc, increment, query, where, getDocs, onSnapshot, DocumentReference } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
 interface OrderItem {
@@ -28,23 +28,115 @@ interface Tab {
   createdAt: Date;
 }
 
-// Distinct colors for categories - completely different color families, no relatives
+// Distinct colors for categories
 const categoryColors: Record<string, { bg: string; hoverBg: string; activeBg: string; text: string }> = {
-  Coffee: { bg: "#FFF0F5", hoverBg: "#FFE4EC", activeBg: "#C0392B", text: "#8B5E6E" },        // Rose/Red family
-  "Non Coffee": { bg: "#E8F4F8", hoverBg: "#D4EAF0", activeBg: "#2980B9", text: "#2C6E7A" },   // Blue family
-  Milktea: { bg: "#FFF8E1", hoverBg: "#FFECB3", activeBg: "#F39C12", text: "#D68910" },        // Yellow/Orange family
-  "Yakult Mix": { bg: "#E8F5E9", hoverBg: "#C8E6C9", activeBg: "#43A047", text: "#2E7D32" },  // Green family
-  "Fruit Tea": { bg: "#FCE4EC", hoverBg: "#F8BBD0", activeBg: "#E91E63", text: "#AD1457" },    // Pink/Magenta family
-  "Hot Tea": { bg: "#EDE7F6", hoverBg: "#D1C4E9", activeBg: "#5E35B1", text: "#4527A0" },      // Purple family
-  Frappe: { bg: "#FFFFFF", hoverBg: "#F0F0F0", activeBg: "#D0D0D0", text: "#000000" },         // Black and white family
-  "Food & Bites": { bg: "#EFEBE9", hoverBg: "#D7CCC8", activeBg: "#8D6E63", text: "#5D4037" }, // Brown family
+  Coffee: { bg: "#FFF0F5", hoverBg: "#FFE4EC", activeBg: "#C0392B", text: "#8B5E6E" },
+  "Non Coffee": { bg: "#E8F4F8", hoverBg: "#D4EAF0", activeBg: "#2980B9", text: "#2C6E7A" },
+  Milktea: { bg: "#FFF8E1", hoverBg: "#FFECB3", activeBg: "#F39C12", text: "#D68910" },
+  "Yakult Mix": { bg: "#E8F5E9", hoverBg: "#C8E6C9", activeBg: "#43A047", text: "#2E7D32" },
+  "Fruit Tea": { bg: "#FCE4EC", hoverBg: "#F8BBD0", activeBg: "#E91E63", text: "#AD1457" },
+  "Hot Tea": { bg: "#EDE7F6", hoverBg: "#D1C4E9", activeBg: "#5E35B1", text: "#4527A0" },
+  Frappe: { bg: "#FFFFFF", hoverBg: "#F0F0F0", activeBg: "#D0D0D0", text: "#000000" },
+  "Food & Bites": { bg: "#EFEBE9", hoverBg: "#D7CCC8", activeBg: "#8D6E63", text: "#5D4037" },
 };
 
-// Per-subcategory colors for Frappe types - COMPLETELY UNIQUE, highly distinguishable
+// Per-subcategory colors for Frappe types
 const frappeSubColors: Record<string, { bg: string; hoverBg: string; activeBg: string; text: string }> = {
-  "Coffee Based": { bg: "#FFF9C4", hoverBg: "#FFF59D", activeBg: "#F57F17", text: "#E65100" },     // Vibrant Amber/Gold
-  "Cream Based":  { bg: "#B2DFDB", hoverBg: "#80CBC4", activeBg: "#00796B", text: "#004D40" },     // Teal/Seafoam Green
-  "Tea Based":    { bg: "#D1C4E9", hoverBg: "#B39DDB", activeBg: "#4527A0", text: "#311B92" },     // Deep Indigo/Purple
+  "Coffee Based": { bg: "#FFF9C4", hoverBg: "#FFF59D", activeBg: "#F57F17", text: "#E65100" },
+  "Cream Based":  { bg: "#B2DFDB", hoverBg: "#80CBC4", activeBg: "#00796B", text: "#004D40" },
+  "Tea Based":    { bg: "#D1C4E9", hoverBg: "#B39DDB", activeBg: "#4527A0", text: "#311B92" },
+};
+
+// ---------------------------------------------------------
+// RECIPES & INVENTORY LOGIC
+// ---------------------------------------------------------
+type Recipes = Record<string, Record<string, Record<string, number>>>;
+
+const RECIPES: Recipes = {
+  // --- MILK TEAS --- 
+  "Milktea - Okinawa": {
+    "Medium": { "Assam Black Tea": 200, "Creamer": 20, "Fructose": 25, "Okinawa Powder": 15 },
+    "Large":  { "Assam Black Tea": 300, "Creamer": 30, "Fructose": 35, "Okinawa Powder": 25 } 
+  },
+  "Milktea - Dark Choco": {
+    "Medium": { "Assam Black Tea": 200, "Creamer": 20, "Fructose": 25, "Dark Choco Powder": 20 },
+    "Large":  { "Assam Black Tea": 300, "Creamer": 30, "Fructose": 35, "Dark Choco Powder": 30 }
+  },
+  "Milktea - Strawberry": {
+    "Medium": { "Assam Black Tea": 200, "Creamer": 20, "Fructose": 25, "Strawberry Powder": 20 },
+    "Large":  { "Assam Black Tea": 300, "Creamer": 30, "Fructose": 35, "Strawberry Powder": 30 }
+  },
+  "Milktea - Capuccino": { 
+    "Medium": { "Assam Black Tea": 200, "Creamer": 20, "Fructose": 25, "Cappuccino Powder": 20 },
+    "Large":  { "Assam Black Tea": 300, "Creamer": 30, "Fructose": 35, "Cappuccino Powder": 30 }
+  },
+  "Milktea - Wintermelon": {
+    "Medium": { "Assam Black Tea": 200, "Creamer": 20, "Wintermelon": 30 },
+    "Large":  { "Assam Black Tea": 300, "Creamer": 30, "Wintermelon": 40 }
+  },
+
+  // --- FRAPPES ---
+  "Mocha": {
+    "Medium": { "Coffee": 80, "Creamer": 20, "Vanilla Powder": 10, "Fructose": 20 },
+    "Large":  { "Coffee": 120, "Creamer": 30, "Vanilla Powder": 15, "Fructose": 30 }
+  },
+  "Dark Mocha": {
+    "Medium": { "Coffee": 80, "Creamer": 20, "Vanilla Powder": 10, "Fructose": 20, "Dark Chocolate Powder": 10 },
+    "Large":  { "Coffee": 120, "Creamer": 30, "Vanilla Powder": 15, "Fructose": 30, "Dark Chocolate Powder": 15 }
+  },
+  "Caramel": {
+    "Medium": { "Coffee": 80, "Creamer": 20, "Vanilla Powder": 10, "Fructose": 10, "Caramel Syrup": 30 },
+    "Large":  { "Coffee": 120, "Creamer": 30, "Vanilla Powder": 15, "Fructose": 20, "Caramel Syrup": 40 }
+  },
+  "Vanilla": {
+    "Medium": { "Creamer": 10, "Vanilla Powder": 20, "Fructose": 20, "Water": 50 },
+    "Large":  { "Creamer": 15, "Vanilla Powder": 30, "Fructose": 30, "Water": 70 }
+  },
+  "Coffee Jelly": {
+    "Medium": { "Coffee": 80, "Creamer": 20, "Vanilla Powder": 10, "Fructose": 15 },
+    "Large":  { "Coffee": 120, "Creamer": 30, "Vanilla Powder": 15, "Fructose": 20 }
+  },
+  "Chocolate Chip": {
+    "Medium": { "Creamer": 10, "Vanilla Powder": 20, "Fructose": 15, "Chocolate Syrup": 40, "Chocolate Chip": 10, "Water": 50 },
+    "Large":  { "Creamer": 15, "Vanilla Powder": 30, "Fructose": 25, "Chocolate Syrup": 50, "Chocolate Chip": 15, "Water": 70 }
+  },
+
+  // --- YAKULT MIX ---
+  "Yakult Mix - Strawberry": { "Medium": { "Cold Water": 80, "Syrup": 15, "Fructose": 20, "Yakult": 1 }, "Large": { "Cold Water": 175, "Syrup": 25, "Fructose": 30, "Yakult": 2 } },
+  "Yakult Mix - Green Apple": { "Medium": { "Cold Water": 80, "Syrup": 15, "Fructose": 20, "Yakult": 1 }, "Large": { "Cold Water": 175, "Syrup": 25, "Fructose": 30, "Yakult": 2 } },
+  "Yakult Mix - Blueberry": { "Medium": { "Cold Water": 80, "Syrup": 15, "Fructose": 20, "Yakult": 1 }, "Large": { "Cold Water": 175, "Syrup": 25, "Fructose": 30, "Yakult": 2 } },
+  "Yakult Mix - Lychee": { "Medium": { "Cold Water": 80, "Syrup": 15, "Fructose": 20, "Yakult": 1 }, "Large": { "Cold Water": 175, "Syrup": 25, "Fructose": 30, "Yakult": 2 } },
+  "Yakult Mix - Wintermelon": { "Medium": { "Cold Water": 80, "Syrup": 15, "Fructose": 20, "Yakult": 1 }, "Large": { "Cold Water": 175, "Syrup": 25, "Fructose": 30, "Yakult": 2 } },
+
+  // --- FRUIT TEAS ---
+  "Fruit Tea - Green Apple": { "Medium": { "Jasmine Green Tea": 200, "Syrup": 40, "Fructose": 15 }, "Large": { "Jasmine Green Tea": 300, "Syrup": 60, "Fructose": 25 } },
+  "Fruit Tea - Blueberry": { "Medium": { "Jasmine Green Tea": 200, "Syrup": 40, "Fructose": 15 }, "Large": { "Jasmine Green Tea": 300, "Syrup": 60, "Fructose": 25 } },
+  "Fruit Tea - Lychee": { "Medium": { "Jasmine Green Tea": 200, "Syrup": 40, "Fructose": 15 }, "Large": { "Jasmine Green Tea": 300, "Syrup": 60, "Fructose": 25 } },
+  "Fruit Tea - Strawberry": { "Medium": { "Jasmine Green Tea": 200, "Syrup": 40, "Fructose": 15 }, "Large": { "Jasmine Green Tea": 300, "Syrup": 60, "Fructose": 25 } },
+  "Fruit Tea - Wintermelon": { "Medium": { "Jasmine Green Tea": 200, "Syrup": 40, "Fructose": 15 }, "Large": { "Jasmine Green Tea": 300, "Syrup": 60, "Fructose": 25 } }
+};
+
+// Serving sizes ng Add-Ons
+const ADD_ON_SERVING_SIZES: Record<string, number> = {
+  Pearl: 50,
+  Nata: 40,
+  Espresso: 30,
+  "Coffee Jelly": 40,
+  Oreo: 1,
+  Caramel: 20,
+  "Whip Cream": 20
+};
+
+// Allowed Add-ons per Category
+const CATEGORY_ADD_ONS: Record<string, string[]> = {
+  "Coffee": ["Espresso", "Coffee Jelly", "Caramel", "Whip Cream"],
+  "Non Coffee": ["Pearl", "Nata", "Coffee Jelly", "Oreo", "Caramel", "Whip Cream"],
+  "Milktea": ["Pearl", "Nata", "Coffee Jelly", "Oreo", "Whip Cream"],
+  "Yakult Mix": ["Pearl", "Nata", "Coffee Jelly"],
+  "Fruit Tea": ["Pearl", "Nata", "Coffee Jelly"],
+  "Frappe": ["Espresso", "Coffee Jelly", "Oreo", "Caramel", "Pearl", "Nata", "Whip Cream"],
+  "Hot Tea": [],
+  "Food & Bites": []
 };
 
 // Delete Confirmation Modal Component
@@ -123,7 +215,6 @@ function ManageModal({
   const [selectedCategory, setSelectedCategory] = useState(categories[0] || "Coffee");
   const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
   
-  // Delete confirmation states
   const [deleteConfirm, setDeleteConfirm] = useState<{
     isOpen: boolean;
     type: "category" | "item";
@@ -157,7 +248,6 @@ function ManageModal({
       setMessage({ text: "Please enter a valid price", type: "error" });
       return;
     }
-    // Check if item already exists in the category
     if (itemsByCategory[selectedCategory]?.includes(itemName.trim())) {
       setMessage({ text: `Item "${itemName}" already exists in ${selectedCategory}!`, type: "error" });
       return;
@@ -206,7 +296,6 @@ function ManageModal({
               </button>
             </div>
 
-            {/* Tab Switcher */}
             <div className="flex gap-2 mb-6 border-b border-[#e8ddd4]">
               <button
                 onClick={() => { setActiveTab("category"); setMessage(null); }}
@@ -230,7 +319,6 @@ function ManageModal({
               </button>
             </div>
 
-            {/* Category Form */}
             {activeTab === "category" && (
               <div className="space-y-4">
                 <div>
@@ -255,7 +343,6 @@ function ManageModal({
                   + Add Category
                 </button>
 
-                {/* List of existing categories with delete buttons */}
                 <div className="mt-6 pt-4 border-t" style={{ borderColor: "#e8ddd4" }}>
                   <h3 className="text-md font-semibold mb-3" style={{ color: "#3b2212" }}>
                     Existing Categories
@@ -282,7 +369,6 @@ function ManageModal({
               </div>
             )}
 
-            {/* Item Form */}
             {activeTab === "item" && (
               <div className="space-y-4">
                 <div>
@@ -355,7 +441,6 @@ function ManageModal({
                   + Add Item
                 </button>
 
-                {/* List of existing items in selected category with delete buttons */}
                 <div className="mt-6 pt-4 border-t" style={{ borderColor: "#e8ddd4" }}>
                   <h3 className="text-md font-semibold mb-3" style={{ color: "#3b2212" }}>
                     Items in "{selectedCategory}"
@@ -388,7 +473,6 @@ function ManageModal({
               </div>
             )}
 
-            {/* Message Display */}
             {message && (
               <div
                 className={`mt-4 p-3 rounded-xl text-center ${
@@ -403,7 +487,6 @@ function ManageModal({
         </div>
       </div>
 
-      {/* Delete Confirmation Modal */}
       <DeleteConfirmModal
         isOpen={deleteConfirm.isOpen}
         onClose={() => setDeleteConfirm({ isOpen: false, type: "category", name: "" })}
@@ -419,9 +502,29 @@ export default function POSLayout() {
   const { user, loading, logout } = useAuth();
   const router = useRouter();
 
+  const [inventoryStock, setInventoryStock] = useState<Record<string, { quantity: number; unit: string; reorderLevel: number }>>({});
+
   useEffect(() => {
     if (!loading && !user) router.push("/");
   }, [user, loading, router]);
+
+  useEffect(() => {
+    const unsubscribe = onSnapshot(collection(db, "inventory"), (snapshot) => {
+      const stock: Record<string, { quantity: number; unit: string; reorderLevel: number }> = {};
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        if (data.name) {
+          stock[data.name] = { 
+            quantity: parseFloat(data.quantity) || 0, 
+            unit: data.unit || "units",
+            reorderLevel: parseFloat(data.reorderLevel) || 0
+          };
+        }
+      });
+      setInventoryStock(stock);
+    });
+    return () => unsubscribe();
+  }, []);
 
   const handleLogout = async () => {
     await logout();
@@ -434,7 +537,6 @@ export default function POSLayout() {
     return () => clearInterval(interval);
   }, []);
 
-  // Tab management state
   const [tabs, setTabs] = useState<Tab[]>([
     {
       id: crypto.randomUUID(),
@@ -451,7 +553,7 @@ export default function POSLayout() {
   const [editingTabName, setEditingTabName] = useState("");
   const tabsContainerRef = useRef<HTMLDivElement>(null);
 
-  const [activeCategory, setActiveCategory] = useState("Coffee");
+  const [activeCategory, setActiveCategory] = useState<string>("Coffee");
   const [activeFoodSubCategory, setActiveFoodSubCategory] = useState<string>("All");
   const [selectedProduct, setSelectedProduct] = useState<string | null>(null);
   const [activeFrappeType, setActiveFrappeType] = useState<string | null>(null);
@@ -470,12 +572,10 @@ export default function POSLayout() {
   const [gcashRefModal, setGcashRefModal] = useState(false);
   const [isManageModalOpen, setIsManageModalOpen] = useState(false);
 
-  // Dynamic products state
   const [dynamicProducts, setDynamicProducts] = useState<Record<string, string[]>>({});
   const [dynamicPrices, setDynamicPrices] = useState<Record<string, { M: number; L: number }>>({});
-  const [dynamicItemColors, setDynamicItemColors] = useState<Record<string, { bg: string; activeBg: string; text: string }>>({});
+  const [dynamicItemColors, setDynamicItemColors] = useState<Record<string, { bg: string; hoverBg?: string; activeBg: string; text: string }>>({});
 
-  // Updated: name + number instead of ref number
   const [gcashName, setGcashName] = useState("");
   const [gcashNumber, setGcashNumber] = useState("");
   const [activeGcashInput, setActiveGcashInput] = useState<"name" | null>(null);
@@ -493,40 +593,33 @@ export default function POSLayout() {
   const [qtyInputs, setQtyInputs] = useState<Record<number, string>>({});
 
   const [isProcessing, setIsProcessing] = useState(false);
+  const [modalError, setModalError] = useState<string | null>(null);
 
-  // Discount modal state
   const [discountModal, setDiscountModal] = useState(false);
   const [pendingDiscount, setPendingDiscount] = useState<"PWD" | "Senior" | null>(null);
-  const [discountCustomerName, setDiscountCustomerName] = useState("");
-  const [discountCustomerID, setDiscountCustomerID] = useState("");
   
-  // Keyboard states for discount modal
   const [activeInput, setActiveInput] = useState<"name" | "id" | null>(null);
   const [tempName, setTempName] = useState("");
   const [tempID, setTempID] = useState("");
 
-  // Get current active tab data
   const activeTab = tabs.find(tab => tab.id === activeTabId);
   const orderItems = activeTab?.orderItems || [];
   const discount = activeTab?.discount || "None";
   const discountCustomerNameTab = activeTab?.discountCustomerName || "";
   const discountCustomerIDTab = activeTab?.discountCustomerID || "";
 
-  // Update active tab's order items
   const updateActiveTabOrderItems = (newOrderItems: OrderItem[]) => {
     setTabs(prev => prev.map(tab => 
       tab.id === activeTabId ? { ...tab, orderItems: newOrderItems } : tab
     ));
   };
 
-  // Update active tab's discount
   const updateActiveTabDiscount = (newDiscount: "None" | "PWD" | "Senior", name: string, id: string) => {
     setTabs(prev => prev.map(tab => 
       tab.id === activeTabId ? { ...tab, discount: newDiscount, discountCustomerName: name, discountCustomerID: id } : tab
     ));
   };
 
-  // Create new tab
   const createNewTab = () => {
     const newTabId = crypto.randomUUID();
     const newTabNumber = tabs.length + 1;
@@ -542,7 +635,6 @@ export default function POSLayout() {
     setTabs(prev => [...prev, newTab]);
     setActiveTabId(newTabId);
     
-    // Scroll to show new tab
     setTimeout(() => {
       if (tabsContainerRef.current) {
         tabsContainerRef.current.scrollLeft = tabsContainerRef.current.scrollWidth;
@@ -550,11 +642,9 @@ export default function POSLayout() {
     }, 100);
   };
 
-  // Close tab
   const closeTab = (tabId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (tabs.length === 1) {
-      // Don't close the last tab, just clear it
       if (confirm("Clear all items in this tab?")) {
         setTabs(prev => prev.map(tab => 
           tab.id === tabId 
@@ -574,14 +664,12 @@ export default function POSLayout() {
     });
   };
 
-  // Start editing tab name
   const startEditingTabName = (tabId: string, currentName: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setEditingTabId(tabId);
     setEditingTabName(currentName);
   };
 
-  // Save edited tab name
   const saveTabName = () => {
     if (editingTabId && editingTabName.trim()) {
       setTabs(prev => prev.map(tab => 
@@ -592,7 +680,6 @@ export default function POSLayout() {
     setEditingTabName("");
   };
 
-  // Handle keyboard for tab name editing
   const handleTabNameKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       saveTabName();
@@ -623,7 +710,7 @@ export default function POSLayout() {
     updateActiveTabOrderItems(newOrderItems);
   };
 
-  const products = {
+  const products: Record<string, string[]> = {
     Coffee: ["Americano", "Cappuccino", "Hazelnut", "Caramel Macchiato", "Mocha", "Spanish Latte", "Salted Caramel Latte", "Dirty Matcha", "Vanilla Latte"],
     "Non Coffee": ["Choco", "Dark Choco", "Matcha latte", "Salted Caramel", "Caramel"],
     Milktea: ["Wintermelon", "Okinawa", "Dark Choco", "Capuccino"],
@@ -634,9 +721,17 @@ export default function POSLayout() {
     "Food & Bites": [],
   };
 
-  // Merge static and dynamic products
-  const allProducts = { ...products, ...dynamicProducts };
-
+  const allProducts: Record<string, string[]> = { ...products };
+  
+  // Imbes na i-overwrite, idudugtong natin yung mga items galing Firebase sa default items
+  Object.keys(dynamicProducts).forEach(cat => {
+    if (allProducts[cat]) {
+      allProducts[cat] = [...allProducts[cat], ...dynamicProducts[cat]];
+    } else {
+      allProducts[cat] = dynamicProducts[cat];
+    }
+  });
+  
   const frappeProducts = {
     "Coffee Based": ["Java Chip", "Coffee Jelly", "Dark Mocha", "Caramel"],
     "Cream Based": ["Vanilla", "Cookies & Cream", "Strawberries & Cream", "Blue Berries & Cream", "Choco Chip", "Caramel", "Salted Caramel"],
@@ -762,33 +857,27 @@ export default function POSLayout() {
 
   const ADD_ON_PRICE = 30;
 
-  // Function to add a new category
   const handleAddCategory = (categoryName: string) => {
     setDynamicProducts(prev => ({
       ...prev,
       [categoryName]: []
     }));
-    // Add to categoryColors with default colors
     if (!categoryColors[categoryName]) {
       categoryColors[categoryName] = { bg: "#f5f5f5", hoverBg: "#eeeeee", activeBg: "#3b2212", text: "#6b4c30" };
     }
   };
 
-  // Function to add a new item
   const handleAddItem = (item: { name: string; price: number; color: string; category: string }) => {
-    // Add to products
     setDynamicProducts(prev => ({
       ...prev,
       [item.category]: [...(prev[item.category] || []), item.name]
     }));
     
-    // Add to prices (Medium and Large)
     setDynamicPrices(prev => ({
       ...prev,
       [item.name]: { M: item.price, L: item.price + 20 }
     }));
     
-    // Add custom color for this item
     const color = item.color;
     setDynamicItemColors(prev => ({
       ...prev,
@@ -800,16 +889,13 @@ export default function POSLayout() {
     }));
   };
 
-  // Delete a category
   const handleDeleteCategory = (categoryName: string) => {
-    // Don't allow deletion of default categories (optional - remove if you want to allow deletion of all)
     const defaultCategories = ["Coffee", "Non Coffee", "Milktea", "Yakult Mix", "Fruit Tea", "Hot Tea", "Frappe", "Food & Bites"];
     if (defaultCategories.includes(categoryName)) {
       alert("Cannot delete default categories!");
       return;
     }
     
-    // Remove category from dynamic products
     const itemsToRemove = [...(dynamicProducts[categoryName] || [])];
     
     setDynamicProducts(prev => {
@@ -818,7 +904,6 @@ export default function POSLayout() {
       return newProducts;
     });
     
-    // Remove all items from this category from dynamic prices
     setDynamicPrices(prev => {
       const newPrices = { ...prev };
       itemsToRemove.forEach(item => {
@@ -827,7 +912,6 @@ export default function POSLayout() {
       return newPrices;
     });
     
-    // Remove item colors
     setDynamicItemColors(prev => {
       const newColors = { ...prev };
       itemsToRemove.forEach(item => {
@@ -837,9 +921,7 @@ export default function POSLayout() {
     });
   };
 
-  // Delete an item
   const handleDeleteItem = (categoryName: string, itemName: string) => {
-    // Don't allow deletion of default items (optional)
     const defaultItems = [
       "Americano", "Cappuccino", "Hazelnut", "Caramel Macchiato", "Mocha", "Spanish Latte", "Salted Caramel Latte", "Dirty Matcha", "Vanilla Latte",
       "Choco", "Dark Choco", "Matcha latte", "Salted Caramel", "Caramel",
@@ -855,20 +937,17 @@ export default function POSLayout() {
       return;
     }
     
-    // Remove item from category
     setDynamicProducts(prev => ({
       ...prev,
       [categoryName]: prev[categoryName]?.filter(item => item !== itemName) || []
     }));
     
-    // Remove price for this item
     setDynamicPrices(prev => {
       const newPrices = { ...prev };
       delete newPrices[itemName];
       return newPrices;
     });
     
-    // Remove color for this item
     setDynamicItemColors(prev => {
       const newColors = { ...prev };
       delete newColors[itemName];
@@ -879,24 +958,17 @@ export default function POSLayout() {
   const getDrinkPrice = (productName: string, size: string, category: string, frappeType: string | null): number => {
     const s = size === "Large" || size === "Pot" ? "L" : "M";
     
-    // Check dynamic prices first
     if (dynamicPrices[productName]) {
       return dynamicPrices[productName][s as "M"|"L"] ?? dynamicPrices[productName]["M"] ?? 150;
     }
     
     switch (category) {
-      case "Coffee":
-        return coffeePrices[productName]?.[s as "M"|"L"] ?? 150;
-      case "Non Coffee":
-        return nonCoffeePrices[productName]?.[s as "M"|"L"] ?? 140;
-      case "Milktea":
-        return milkteaPrices[productName]?.[s as "M"|"L"] ?? 120;
-      case "Yakult Mix":
-        return yakultMixPrices[productName]?.[s as "M"|"L"] ?? 150;
-      case "Fruit Tea":
-        return fruitTeaPrices[productName]?.[s as "M"|"L"] ?? 110;
-      case "Hot Tea":
-        return hotTeaPrices[productName] ?? 120;
+      case "Coffee": return coffeePrices[productName]?.[s as "M"|"L"] ?? 150;
+      case "Non Coffee": return nonCoffeePrices[productName]?.[s as "M"|"L"] ?? 140;
+      case "Milktea": return milkteaPrices[productName]?.[s as "M"|"L"] ?? 120;
+      case "Yakult Mix": return yakultMixPrices[productName]?.[s as "M"|"L"] ?? 150;
+      case "Fruit Tea": return fruitTeaPrices[productName]?.[s as "M"|"L"] ?? 110;
+      case "Hot Tea": return hotTeaPrices[productName] ?? 120;
       default: {
         const fType = frappeType ?? getFrappeType(productName);
         if (fType === "Coffee Based") return frappeCoffeeBasedPrices[productName]?.[s as "M"|"L"] ?? 155;
@@ -915,11 +987,8 @@ export default function POSLayout() {
   };
 
   const allFoodItems = Object.values(foodProducts).flat();
-
   const quesadillasVariants = ["Beef", "Cheese"];
-  const addOns = ["Espresso", "Coffee Jelly", "Oreo", "Caramel", "Pearl", "Nata", "Whip Cream"];
 
-  // Build a flat list of { name, category } pairs including dynamic products
   const allProductEntries: { name: string; category: string }[] = [
     ...Object.entries(allProducts).flatMap(([cat, items]) =>
       (items as string[]).map(name => ({ name, category: cat }))
@@ -957,6 +1026,95 @@ export default function POSLayout() {
     ? !checkIsFood(selectedProduct || "")
     : categoriesWithAddOns.includes(activeCategory);
 
+  // ---------------------------------------------------------
+  // RESERVED STOCK & STOCK CHECKER PARA SA UI TEXT
+  // ---------------------------------------------------------
+  const alreadyInCartReserved: Record<string, number> = {};
+  tabs.forEach(tab => {
+    tab.orderItems.forEach(cartItem => {
+      const cSizeKey = cartItem.size === "Large" ? "Large" : "Medium";
+      const catLabel = cartItem.category.split(" · ")[0];
+      const cSpecificRecipeKey = `${catLabel} - ${cartItem.name}`;
+      const cRecipe = RECIPES[cSpecificRecipeKey]?.[cSizeKey] || RECIPES[cartItem.name]?.[cSizeKey];
+      
+      if (cRecipe) {
+        Object.entries(cRecipe).forEach(([ing, amt]) => {
+          alreadyInCartReserved[ing] = (alreadyInCartReserved[ing] || 0) + ((amt as number) * cartItem.quantity);
+        });
+      }
+      if (cartItem.addOns) {
+        cartItem.addOns.forEach(addOn => {
+          alreadyInCartReserved[addOn] = (alreadyInCartReserved[addOn] || 0) + ((ADD_ON_SERVING_SIZES[addOn] || 1) * cartItem.quantity);
+        });
+      }
+    });
+  });
+
+  const getItemStockStatus = (item: string, categoryLabel?: string): "Available" | "Low Stock" | "Not Available" | "No Ingredients" => {
+    const catLabel = categoryLabel ? categoryLabel.split(" · ")[0] : "";
+    const specificRecipeKey = `${catLabel} - ${item}`;
+    const recipe = RECIPES[specificRecipeKey]?.["Medium"] || RECIPES[item]?.["Medium"];
+    
+    if (!recipe) {
+      if (catLabel === "Food & Bites") return "Available"; 
+      return "No Ingredients"; 
+    }
+
+    let isLow = false;
+
+    for (const [ingredient, neededAmount] of Object.entries(recipe)) {
+      const stockData = inventoryStock[ingredient];
+      const stockAvailable = stockData?.quantity || 0;
+      
+      const reorderLvl = stockData?.reorderLevel || ((neededAmount as number) * 3); 
+      const reserved = alreadyInCartReserved[ingredient] || 0;
+      const remaining = stockAvailable - reserved;
+
+      if (remaining < (neededAmount as number)) {
+        return "Not Available"; 
+      } else if (remaining <= reorderLvl) {
+        isLow = true; 
+      }
+    }
+    return isLow ? "Low Stock" : "Available";
+  };
+
+  // ---------------------------------------------------------
+  // REAL-TIME OOS CHECKER PARA SA LOOB NG MODAL
+  // ---------------------------------------------------------
+  const currentMissingIngredients: string[] = [];
+  if (selectedProduct) {
+    const requiredForThisItem: Record<string, number> = {};
+    const sizeKey = sizeOption === "Large" ? "Large" : "Medium";
+    const catLabel = selectedProductCategory.split(" · ")[0];
+    const specificRecipeKey = `${catLabel} - ${selectedProduct}`;
+    
+    const recipe = RECIPES[specificRecipeKey]?.[sizeKey] || RECIPES[selectedProduct]?.[sizeKey]; 
+    
+    if (recipe) {
+      Object.entries(recipe).forEach(([ingredientName, amount]) => {
+        requiredForThisItem[ingredientName] = (requiredForThisItem[ingredientName] || 0) + (amount as number);
+      });
+    }
+
+    if (selectedAddOns.length > 0) {
+      selectedAddOns.forEach(addOn => {
+        requiredForThisItem[addOn] = (requiredForThisItem[addOn] || 0) + (ADD_ON_SERVING_SIZES[addOn] || 1);
+      });
+    }
+
+    Object.entries(requiredForThisItem).forEach(([ingredient, neededAmount]) => {
+      const stockAvailable = inventoryStock[ingredient]?.quantity || 0;
+      const reserved = alreadyInCartReserved[ingredient] || 0;
+      const unit = inventoryStock[ingredient]?.unit || "units";
+      
+      if ((reserved + neededAmount) > stockAvailable) {
+        currentMissingIngredients.push(`${ingredient} (Need: ${neededAmount}${unit}, Available: ${Math.max(0, stockAvailable - reserved)}${unit})`);
+      }
+    });
+  }
+
+
   const getModalPrice = (): number => {
     if (!selectedProduct) return 0;
     if (isFood) {
@@ -977,6 +1135,7 @@ export default function POSLayout() {
   const handleAddToOrder = () => {
     if (!selectedProduct) return;
     if (selectedProduct === "Quesadillas" && !selectedVariant) return;
+    if (currentMissingIngredients.length > 0) return;
 
     let price: number;
     let displayName = selectedProduct;
@@ -1015,6 +1174,7 @@ export default function POSLayout() {
     setSelectedVariant(null);
     setSelectedProductIsFood(false);
     setSelectedProductCategory("");
+    setModalError(null);
   };
 
   const handleToggleAddOn = (addOn: string) => {
@@ -1045,6 +1205,9 @@ export default function POSLayout() {
     return `TXN-${date}-${seq}`;
   };
 
+  // ---------------------------------------------------------
+  // FIXED CHECKOUT PROCESS (BULLETPROOF UPDATES WITH FIFO BATCHES)
+  // ---------------------------------------------------------
   const processCheckout = async (paymentMethod: "Cash" | "GCash", senderNumber?: string, senderName?: string) => {
     if (orderItems.length === 0) {
       setCheckoutMessage("No items in the cart to checkout.");
@@ -1066,12 +1229,8 @@ export default function POSLayout() {
           quantity: item.quantity,
           price: item.price,
         };
-        if (Array.isArray(item.addOns) && item.addOns.length > 0) {
-          cleaned.addOns = item.addOns;
-        }
-        if (typeof item.variant !== "undefined") {
-          cleaned.variant = item.variant;
-        }
+        if (Array.isArray(item.addOns) && item.addOns.length > 0) cleaned.addOns = item.addOns;
+        if (typeof item.variant !== "undefined") cleaned.variant = item.variant;
         return cleaned;
       });
 
@@ -1080,13 +1239,7 @@ export default function POSLayout() {
         items: sanitizedItems,
         totalAmount: total,
         discount: discount !== "None"
-          ? {
-              type: discount,
-              rate: 0.20,
-              amount: discountAmount,
-              customerName: discountCustomerNameTab,
-              customerID: discountCustomerIDTab,
-            }
+          ? { type: discount, rate: 0.20, amount: discountAmount, customerName: discountCustomerNameTab, customerID: discountCustomerIDTab }
           : null,
         paymentMethod,
         gcashSenderName: paymentMethod === "GCash" ? (senderName ?? null) : null,
@@ -1095,48 +1248,112 @@ export default function POSLayout() {
         createdAt: serverTimestamp(),
       };
 
-      const servingSizes: Record<string, number> = {
-        Pearl: 50,
-        "Nata de Coco": 40,
-        Espresso: 30,
-      };
-
-      const addOnDeductions: Record<string, number> = {};
+      const requiredIngredients: Record<string, number> = {};
       orderItems.forEach(item => {
+        const sizeKey = item.size === "Large" ? "Large" : "Medium";
+        const catLabel = item.category.split(" · ")[0];
+        const specificRecipeKey = `${catLabel} - ${item.name}`;
+        const recipe = RECIPES[specificRecipeKey]?.[sizeKey] || RECIPES[item.name]?.[sizeKey]; 
+        
+        if (recipe) {
+          Object.entries(recipe).forEach(([ingredientName, amount]) => {
+            requiredIngredients[ingredientName] = (requiredIngredients[ingredientName] || 0) + ((amount as number) * item.quantity);
+          });
+        }
         if (Array.isArray(item.addOns) && item.addOns.length > 0) {
           item.addOns.forEach(addOn => {
-            const deduction = (servingSizes[addOn] || 1) * item.quantity;
-            addOnDeductions[addOn] = (addOnDeductions[addOn] || 0) + deduction;
+            requiredIngredients[addOn] = (requiredIngredients[addOn] || 0) + ((ADD_ON_SERVING_SIZES[addOn] || 1) * item.quantity);
           });
         }
       });
 
-      const addOnNames = Object.keys(addOnDeductions);
+      const ingredientNames = Object.keys(requiredIngredients);
 
-      if (addOnNames.length === 0) {
+      if (ingredientNames.length === 0) {
         await addDoc(collection(db, "orders"), orderPayload);
       } else {
-        const q = query(collection(db, "inventory"), where("name", "in", addOnNames));
+        const q = query(collection(db, "inventory"), where("name", "in", ingredientNames));
         const querySnapshot = await getDocs(q);
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const inventoryRefsToUpdate: { ref: any; deduction: number }[] = [];
+        const foundNames = querySnapshot.docs.map(d => d.data().name);
+        const missingInDb = ingredientNames.filter(name => !foundNames.includes(name));
+        
+        if (missingInDb.length > 0) {
+            throw new Error(`DB_MISSING|${missingInDb.join(", ")}`);
+        }
+
+        const inventoryRefs: { ref: DocumentReference; name: string; needed: number }[] = [];
         querySnapshot.forEach(docSnap => {
           const data = docSnap.data();
-          if (addOnDeductions[data.name]) {
-            inventoryRefsToUpdate.push({
-              ref: docSnap.ref,
-              deduction: addOnDeductions[data.name],
-            });
+          if (requiredIngredients[data.name]) {
+            inventoryRefs.push({ ref: docSnap.ref, name: data.name, needed: requiredIngredients[data.name] });
           }
         });
 
         await runTransaction(db, async (transaction) => {
+          const outOfStockItems: string[] = [];
+          const stockUpdates: { ref: DocumentReference, newQty: number, newBatches: any[] }[] = [];
+
+          for (const item of inventoryRefs) {
+            const docSnap = await transaction.get(item.ref);
+            if (docSnap.exists()) {
+              const data = docSnap.data();
+              const currentStock = parseFloat(data.quantity) || 0;
+              const unit = data.unit || "units";
+              
+              if (currentStock < item.needed) {
+                outOfStockItems.push(`${item.name} (Need: ${item.needed}${unit}, Stock: ${currentStock}${unit})`);
+              } else {
+                // --- FIFO BATCH DEDUCTION LOGIC ---
+                let remainingNeeded = item.needed;
+                const batches = Array.isArray(data.stockBatches) ? [...data.stockBatches] : [];
+
+                // Sort batches oldest to newest based on receivedAt
+                batches.sort((a, b) => {
+                  const dateA = a.receivedAt ? new Date(a.receivedAt).getTime() : 0;
+                  const dateB = b.receivedAt ? new Date(b.receivedAt).getTime() : 0;
+                  return dateA - dateB;
+                });
+
+                const updatedBatches = batches.map(batch => {
+                  if (remainingNeeded <= 0) return batch;
+
+                  let batchQty = parseFloat(batch.quantity) || 0;
+                  if (batchQty > 0) {
+                    if (batchQty >= remainingNeeded) {
+                      batch.quantity = batchQty - remainingNeeded;
+                      remainingNeeded = 0;
+                    } else {
+                      remainingNeeded -= batchQty;
+                      batch.quantity = 0; // Ubos na itong batch
+                    }
+                  }
+                  return batch;
+                });
+
+                stockUpdates.push({ 
+                  ref: item.ref, 
+                  newQty: currentStock - item.needed,
+                  newBatches: updatedBatches
+                });
+              }
+            }
+          }
+
+          if (outOfStockItems.length > 0) {
+            throw new Error(`OUT_OF_STOCK|${outOfStockItems.join(" | ")}`);
+          }
+
           const orderDocRef = doc(collection(db, "orders"));
           transaction.set(orderDocRef, orderPayload);
-          inventoryRefsToUpdate.forEach(({ ref, deduction }) => {
-            transaction.update(ref, { quantity: increment(-deduction) });
-          });
+          
+          for (const update of stockUpdates) {
+            // Update pareho ang root quantity at ang stockBatches!
+            transaction.update(update.ref, { 
+              quantity: update.newQty,
+              stockBatches: update.newBatches
+            });
+          }
         });
       }
 
@@ -1150,7 +1367,6 @@ export default function POSLayout() {
         gcashNumber: paymentMethod === "GCash" ? senderNumber : undefined,
       });
       
-      // Clear current tab's order after successful checkout
       updateActiveTabOrderItems([]);
       updateActiveTabDiscount("None", "", "");
       setAmountTendered("");
@@ -1161,9 +1377,17 @@ export default function POSLayout() {
       setActiveGcashInput(null);
       setCheckoutMessage(null);
       setIsSuccessModalOpen(true);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Checkout failed:", error);
-      setCheckoutMessage("Checkout failed. Please try again.");
+      if (error.message?.includes("OUT_OF_STOCK")) {
+        const missingItems = error.message.split("|")[1].split(" | ").join("\n• ");
+        setCheckoutMessage(`Checkout failed. Not enough stock:\n• ${missingItems}`);
+      } else if (error.message?.includes("DB_MISSING")) {
+        const missingItems = error.message.split("|")[1];
+        setCheckoutMessage(`Database mismatch! Pakicheck spelling sa inventory, nawawala ang:\n• ${missingItems}`);
+      } else {
+        setCheckoutMessage("Checkout failed. Please check your connection or try again.");
+      }
     } finally {
       setIsProcessing(false);
     }
@@ -1172,13 +1396,11 @@ export default function POSLayout() {
   const activeOptStyle = { background: "#3b2212", color: "white" };
   const inactiveOptStyle = { background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" };
 
-  // Returns card colors based on a category string like "Milktea" or "Frappe · Coffee Based"
   const getCardColors = (category: string) => {
     const parts = category.split(" · ");
     const topLevel = parts[0];
     const sub = parts[1];
     
-    // Check if it's a dynamic item with custom color
     if (dynamicItemColors[category]) {
       return {
         bg: dynamicItemColors[category].bg,
@@ -1188,7 +1410,6 @@ export default function POSLayout() {
       };
     }
     
-    // Frappe subcategories get their own distinct color
     if (topLevel === "Frappe" && sub && frappeSubColors[sub]) {
       return frappeSubColors[sub];
     }
@@ -1242,8 +1463,10 @@ export default function POSLayout() {
     setActiveInput(null);
   };
 
-  // Get all categories for the manage modal (excluding Frappe subcategories and Food & Bites subcategories)
   const allCategories = Object.keys(allProducts);
+
+  const baseCategory = selectedProductCategory ? selectedProductCategory.split(" · ")[0] : "";
+  const allowedAddOns = CATEGORY_ADD_ONS[baseCategory] || [];
 
   if (loading) return <div>Loading...</div>;
   if (!user) return <div>Redirecting to login...</div>;
@@ -1327,19 +1550,19 @@ export default function POSLayout() {
             </div>
             
             {/* Manage Menu Button */}
-<button
-  onClick={() => setIsManageModalOpen(true)}
-  className="shrink-0 ml-3 px-4 py-2 rounded-lg text-sm font-medium transition-all hover:bg-[#e8e0d8] border border-[#e8ddd4] bg-white whitespace-nowrap flex items-center gap-2"
-  style={{ color: "#5a3d28" }}
-  title="Manage Categories & Items"
->
-  <img 
-    src="/settings.png" 
-    alt="Menu Icon" 
-    className="w-5 h-5"
-  />
-  Manage Menu
-</button>
+            <button
+              onClick={() => setIsManageModalOpen(true)}
+              className="shrink-0 ml-3 px-4 py-2 rounded-lg text-sm font-medium transition-all hover:bg-[#e8e0d8] border border-[#e8ddd4] bg-white whitespace-nowrap flex items-center gap-2"
+              style={{ color: "#5a3d28" }}
+              title="Manage Categories & Items"
+            >
+              <img 
+                src="/settings.png" 
+                alt="Menu Icon" 
+                className="w-5 h-5"
+              />
+              Manage Menu
+            </button>
           </div>
         </div>
 
@@ -1376,6 +1599,7 @@ export default function POSLayout() {
               <div className="grid grid-cols-4 gap-4">
                 {searchResults.map((entry, i) => {
                   const colors = getCardColors(entry.category);
+                  const stockStatus = getItemStockStatus(entry.name, entry.category);
                   return (
                     <div
                       key={i}
@@ -1388,8 +1612,10 @@ export default function POSLayout() {
                       style={{ background: colors.bg, border: `1.5px solid ${colors.hoverBg}`, minHeight: "100px" }}
                     >
                       <p className="font-normal text-center" style={{ color: colors.activeBg, fontSize: "18px" }}>{entry.name}</p>
-                      <p className="text-xs text-center font-medium" style={{ color: colors.text }}>{entry.category}</p>
-                      {entry.name === "Quesadillas" && <p className="text-xs" style={{ color: colors.text }}>Beef / Cheese</p>}
+                      {stockStatus === "Not Available" && <p className="text-[11px] font-bold mt-0.5" style={{ color: "#c0392b" }}>(Not Available)</p>}
+                      {stockStatus === "Low Stock" && <p className="text-[11px] font-bold mt-0.5" style={{ color: "#d35400" }}>(Low Stock)</p>}
+                      {stockStatus === "No Ingredients" && <p className="text-[10px] font-medium mt-0.5" style={{ color: "#9ca3af" }}>(no ingredients applied)</p>}
+                      <p className="text-xs text-center font-medium mt-1" style={{ color: colors.text }}>{entry.category}</p>
                     </div>
                   );
                 })}
@@ -1411,16 +1637,6 @@ export default function POSLayout() {
                         color: activeCategory === cat ? "white" : colors.text,
                         border: activeCategory === cat ? "none" : "1.5px solid #e8ddd4",
                         boxShadow: activeCategory === cat ? "0 2px 8px rgba(0,0,0,0.1)" : "none",
-                      }}
-                      onMouseEnter={(e) => {
-                        if (activeCategory !== cat) {
-                          e.currentTarget.style.background = colors.hoverBg;
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (activeCategory !== cat) {
-                          e.currentTarget.style.background = colors.bg;
-                        }
                       }}
                     >
                       {cat}
@@ -1475,9 +1691,10 @@ export default function POSLayout() {
                 {activeCategory !== "Frappe" && activeCategory !== "Food & Bites" &&
                   allProducts[activeCategory]?.map((item, i) => {
                     const colors = categoryColors[activeCategory] ?? { bg: "#f5f5f5", hoverBg: "#eeeeee", activeBg: "#3b2212", text: "#6b4c30" };
-                    // Check if this item has custom colors
                     const itemColors = dynamicItemColors[item];
                     const cardColors = itemColors || colors;
+                    const stockStatus = getItemStockStatus(item, activeCategory);
+                    
                     return (
                       <div key={i} onClick={() => {
                         setSelectedProduct(item);
@@ -1487,6 +1704,9 @@ export default function POSLayout() {
                         className="rounded-2xl p-5 cursor-pointer transition-all active:scale-95 touch-manipulation flex flex-col items-center justify-center gap-1"
                         style={{ background: cardColors.bg, border: `1.5px solid ${cardColors.hoverBg || colors.hoverBg}`, minHeight: "100px" }}>
                         <p className="font-normal text-center" style={{ color: cardColors.activeBg, fontSize: "18px" }}>{item}</p>
+                        {stockStatus === "Not Available" && <p className="text-[11px] font-bold mt-0.5" style={{ color: "#c0392b" }}>(Not Available)</p>}
+                        {stockStatus === "Low Stock" && <p className="text-[11px] font-bold mt-0.5" style={{ color: "#d35400" }}>(Low Stock)</p>}
+                        {stockStatus === "No Ingredients" && <p className="text-[10px] font-medium mt-0.5" style={{ color: "#9ca3af" }}>(no ingredients applied)</p>}
                       </div>
                     );
                   })}
@@ -1494,6 +1714,8 @@ export default function POSLayout() {
                 {activeCategory === "Frappe" && activeFrappeType &&
                   frappeProducts[activeFrappeType as keyof typeof frappeProducts]?.map((item, i) => {
                     const colors = frappeSubColors[activeFrappeType] ?? categoryColors["Frappe"];
+                    const stockStatus = getItemStockStatus(item, `Frappe · ${activeFrappeType}`);
+                    
                     return (
                       <div key={i} onClick={() => {
                         setSelectedProduct(item);
@@ -1503,6 +1725,9 @@ export default function POSLayout() {
                         className="rounded-2xl p-5 cursor-pointer transition-all active:scale-95 touch-manipulation flex flex-col items-center justify-center gap-1"
                         style={{ background: colors.bg, border: `1.5px solid ${colors.hoverBg}`, minHeight: "100px" }}>
                         <p className="font-normal text-center" style={{ color: colors.activeBg, fontSize: "18px" }}>{item}</p>
+                        {stockStatus === "Not Available" && <p className="text-[11px] font-bold mt-0.5" style={{ color: "#c0392b" }}>(Not Available)</p>}
+                        {stockStatus === "Low Stock" && <p className="text-[11px] font-bold mt-0.5" style={{ color: "#d35400" }}>(Low Stock)</p>}
+                        {stockStatus === "No Ingredients" && <p className="text-[10px] font-medium mt-0.5" style={{ color: "#9ca3af" }}>(no ingredients applied)</p>}
                       </div>
                     );
                   })}
@@ -1513,6 +1738,8 @@ export default function POSLayout() {
                     : foodProducts[activeFoodSubCategory]
                   )?.map((item, i) => {
                     const colors = categoryColors["Food & Bites"];
+                    const stockStatus = getItemStockStatus(item, `Food & Bites · ${activeFoodSubCategory}`);
+                    
                     return (
                       <div key={i} onClick={() => {
                         setSelectedProduct(item);
@@ -1525,6 +1752,8 @@ export default function POSLayout() {
                         className="rounded-2xl p-5 cursor-pointer transition-all active:scale-95 touch-manipulation flex flex-col items-center justify-center gap-1"
                         style={{ background: colors.bg, border: `1.5px solid ${colors.hoverBg}`, minHeight: "100px" }}>
                         <p className="font-normal text-center" style={{ color: colors.activeBg, fontSize: "18px" }}>{item}</p>
+                        {stockStatus === "Not Available" && <p className="text-[11px] font-bold mt-0.5" style={{ color: "#c0392b" }}>(Not Available)</p>}
+                        {stockStatus === "Low Stock" && <p className="text-[11px] font-bold mt-0.5" style={{ color: "#d35400" }}>(Low Stock)</p>}
                         {item === "Quesadillas" && <p className="text-xs" style={{ color: colors.text }}>Beef / Cheese</p>}
                       </div>
                     );
@@ -1701,8 +1930,14 @@ export default function POSLayout() {
           </div>
 
           {checkoutMessage && (
-            <p className="text-center text-sm mt-2" style={{ color: checkoutMessage.includes("failed") ? "#c0392b" : "#2d7a38" }}>
-              {checkoutMessage}
+            <p className="text-center text-sm mt-2 p-3 rounded-lg" style={{ 
+              background: checkoutMessage.includes("failed") || checkoutMessage.includes("mismatch") ? "#fff0f0" : "#f0faf0",
+              color: checkoutMessage.includes("failed") || checkoutMessage.includes("mismatch") ? "#c0392b" : "#2d7a38",
+              border: `1px solid ${checkoutMessage.includes("failed") || checkoutMessage.includes("mismatch") ? "#f5c6c6" : "#b6e2b6"}`
+            }}>
+              {checkoutMessage.split('\n').map((line, i) => (
+                <span key={i} className="block text-left">{line}</span>
+              ))}
             </p>
           )}
         </div>
@@ -2282,10 +2517,10 @@ export default function POSLayout() {
                 setSelectedVariant(null);
                 setSelectedProductIsFood(false);
                 setSelectedProductCategory("");
+                setModalError(null);
               }}>✕</button>
 
             <h2 className="text-2xl font-bold mb-1 pr-10 text-center" style={{ color: "#3b2212" }}>{selectedProduct}</h2>
-            {/* Show category in modal so cashier knows which variant they opened */}
             {selectedProductCategory && (
               <p className="text-sm text-center mb-6" style={{ color: "#a07850" }}>{selectedProductCategory}</p>
             )}
@@ -2354,7 +2589,7 @@ export default function POSLayout() {
                 </div>
               )}
 
-              {showAddOns && (
+              {showAddOns && allowedAddOns.length > 0 && (
                 <div>
                   <div className="flex justify-between items-center mb-3">
                     <p className="font-semibold text-base" style={{ color: "#3b2212" }}>
@@ -2364,17 +2599,33 @@ export default function POSLayout() {
                   </div>
                   <div className="grid grid-cols-4 gap-3">
                     <button onClick={handleClearAddOns}
-                      className="px-4 py-3 rounded-xl font-semibold transition-all active:scale-95 touch-manipulation"
+                      className="px-2 py-3 rounded-xl font-semibold transition-all active:scale-95 touch-manipulation flex flex-col items-center justify-center gap-1"
                       style={{ fontSize: "14px", ...(selectedAddOns.length === 0 ? activeOptStyle : inactiveOptStyle) }}>
-                      None
+                      <span>None</span>
                     </button>
-                    {addOns.map((addOn) => (
-                      <button key={addOn} onClick={() => handleToggleAddOn(addOn)}
-                        className="px-4 py-3 rounded-xl font-semibold transition-all active:scale-95 touch-manipulation"
-                        style={{ fontSize: "14px", ...(selectedAddOns.includes(addOn) ? activeOptStyle : inactiveOptStyle) }}>
-                        {addOn}
-                      </button>
-                    ))}
+                    {allowedAddOns.map((addOn) => {
+                      const needed = ADD_ON_SERVING_SIZES[addOn] || 1;
+                      const stockAvailable = inventoryStock[addOn]?.quantity || 0;
+                      const reserved = alreadyInCartReserved[addOn] || 0;
+                      const isOOS = (stockAvailable - reserved) < needed;
+                      const isSelected = selectedAddOns.includes(addOn);
+
+                      return (
+                        <button 
+                          key={addOn} 
+                          disabled={isOOS}
+                          onClick={() => handleToggleAddOn(addOn)}
+                          className="px-2 py-3 rounded-xl font-semibold transition-all touch-manipulation flex flex-col items-center justify-center gap-1"
+                          style={{
+                            ...(isOOS
+                              ? { background: "#f5f5f5", color: "#c0b090", border: "1.5px solid #e8ddd4", cursor: "not-allowed", opacity: 0.7 }
+                              : isSelected ? activeOptStyle : inactiveOptStyle)
+                          }}>
+                          <span style={{ fontSize: "14px" }}>{addOn}</span>
+                          {isOOS && <span style={{ fontSize: "10px", color: "#c0392b" }}>(Not Available)</span>}
+                        </button>
+                      );
+                    })}
                   </div>
                   {selectedAddOns.length > 0 && (
                     <div className="mt-4 p-4 rounded-xl text-sm" style={{ background: "#faf7f4", color: "#6b4c30" }}>
@@ -2385,14 +2636,29 @@ export default function POSLayout() {
                 </div>
               )}
 
+              {currentMissingIngredients.length > 0 && (
+                 <div className="mt-2 mb-4 p-4 rounded-xl border" 
+                 style={{ background: "#fff0f0", borderColor: "#f5c6c6", color: "#c0392b" }}>
+                 <p className="text-sm font-bold mb-2">Item Unavailable. Missing Ingredients:</p>
+                 <ul className="text-xs list-disc pl-5 space-y-1">
+                   {currentMissingIngredients.map((err, idx) => (
+                     <li key={idx}>{err}</li>
+                   ))}
+                 </ul>
+               </div>
+              )}
+
               <button
-                disabled={selectedProduct === "Quesadillas" && !selectedVariant}
+                disabled={(selectedProduct === "Quesadillas" && !selectedVariant) || currentMissingIngredients.length > 0}
                 onClick={handleAddToOrder}
                 className="w-full py-4 rounded-xl font-semibold text-lg transition-all active:scale-95 touch-manipulation mt-4"
-                style={selectedProduct === "Quesadillas" && !selectedVariant
+                style={
+                  currentMissingIngredients.length > 0 
+                  ? { background: "#e8e0d8", color: "#c0392b", cursor: "not-allowed" } : 
+                  (selectedProduct === "Quesadillas" && !selectedVariant)
                   ? { background: "#e8e0d8", color: "#b09070", cursor: "not-allowed" }
                   : { background: "#3b2212", color: "white" }}>
-                Add to Order — ₱{modalPrice.toFixed(0)}
+                {currentMissingIngredients.length > 0 ? "Not Available" : `Add to Order — ₱${modalPrice.toFixed(0)}`}
               </button>
             </div>
           </div>
