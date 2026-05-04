@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { collection, addDoc, serverTimestamp, runTransaction, doc, increment, query, where, getDocs, onSnapshot, DocumentReference } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { socketClient, InventoryItem, InventoryUpdate, LowStockAlert } from "@/lib/socket-client";
 
 interface OrderItem {
   name: string;
@@ -876,14 +877,36 @@ function IndividualDiscountModal({
   const router = useRouter();
 
   const [inventoryStock, setInventoryStock] = useState<Record<string, { quantity: number; unit: string; reorderLevel: number }>>({});
+  const [realtimeNotifications, setRealtimeNotifications] = useState<Array<{ id: string; message: string; type: 'info' | 'warning' | 'error'; timestamp: Date }>>([]);
+  const [socketConnected, setSocketConnected] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) router.push("/");
   }, [user, loading, router]);
 
+  // Firebase inventory listener - use real inventory data with real-time updates
   useEffect(() => {
+    if (!user) {
+      console.log('❌ No user logged in - cannot access inventory');
+      return;
+    }
+    
+    console.log('🔄 Using Firebase for real inventory data');
+    console.log('👤 User:', user.displayName, 'UID:', user.uid);
+    console.log('🔐 User authenticated:', user ? 'Yes' : 'No');
+    
     const unsubscribe = onSnapshot(collection(db, "inventory"), (snapshot) => {
       const stock: Record<string, { quantity: number; unit: string; reorderLevel: number }> = {};
+      
+      // Check for changes
+      if (snapshot.docChanges().length > 0) {
+        console.log('🔄 Inventory changes detected:', snapshot.docChanges().length, 'changes');
+        snapshot.docChanges().forEach((change) => {
+          const data = change.doc.data();
+          console.log(`📦 ${change.type}: ${data.name} = ${data.quantity} ${data.unit}`);
+        });
+      }
+      
       snapshot.forEach((doc) => {
         const data = doc.data();
         if (data.name) {
@@ -894,10 +917,52 @@ function IndividualDiscountModal({
           };
         }
       });
+      
       setInventoryStock(stock);
+      console.log('✅ Inventory updated from Firebase:', Object.keys(stock).length, 'items');
+      
+      // Show notification for inventory changes
+      if (snapshot.docChanges().length > 0) {
+        const notificationId = crypto.randomUUID();
+        setRealtimeNotifications(prev => [
+          ...prev,
+          {
+            id: notificationId,
+            message: `📦 Inventory updated in real-time`,
+            type: 'info',
+            timestamp: new Date()
+          }
+        ]);
+        
+        // Auto-dismiss after 3 seconds
+        setTimeout(() => {
+          setRealtimeNotifications(prev => prev.filter(n => n.id !== notificationId));
+        }, 3000);
+      }
+    }, (error) => {
+      console.error('❌ Firebase inventory listener error:', error);
+      console.error('Error code:', error.code);
+      console.error('Error message:', error.message);
+      
+      // Show specific error notification
+      const notificationId = crypto.randomUUID();
+      setRealtimeNotifications(prev => [
+        ...prev,
+        {
+          id: notificationId,
+          message: `❌ Firebase Error: ${error.message}`,
+          type: 'error',
+          timestamp: new Date()
+        }
+      ]);
+      
+      // Keep error notification longer
+      setTimeout(() => {
+        setRealtimeNotifications(prev => prev.filter(n => n.id !== notificationId));
+      }, 10000);
     });
     return () => unsubscribe();
-  }, []);
+  }, [user]);
 
   const handleLogout = async () => {
     await logout();
@@ -1437,6 +1502,9 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
     const specificRecipeKey = `${catLabel} - ${item}`;
     const recipe = RECIPES[specificRecipeKey]?.["Medium"] || RECIPES[item]?.["Medium"];
     
+    // Debug logging
+    console.log(`Checking ${item} (${catLabel}): recipe found: ${!!recipe}, inventoryStock keys:`, Object.keys(inventoryStock));
+    
     if (!recipe) {
       if (catLabel === "Food & Bites") return "Available"; 
       return "No Ingredients"; 
@@ -1452,9 +1520,13 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
       const reserved = alreadyInCartReserved[ingredient] || 0;
       const remaining = stockAvailable - reserved;
 
+      console.log(`  Ingredient ${ingredient}: needed=${neededAmount}, available=${stockAvailable}, reserved=${reserved}, remaining=${remaining}`);
+
       if (remaining < (neededAmount as number)) {
+        console.log(`  -> Not Available (insufficient ${ingredient})`);
         return "Not Available"; 
       } else if (remaining <= reorderLvl) {
+        console.log(`  -> Low stock on ${ingredient}`);
         isLow = true; 
       }
     }
@@ -1605,12 +1677,17 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
 
   // Updated processCheckout to include individual discounts
   const processCheckout = async (paymentMethod: "Cash" | "GCash", senderNumber?: string, senderName?: string) => {
+    console.log('🔄 Starting checkout process...');
+    console.log('📝 Order items:', orderItems.length);
+    console.log('👤 Current user:', user?.displayName, user?.uid);
+    
     if (orderItems.length === 0) {
       setCheckoutMessage("No items in the cart to checkout.");
       return;
     }
 
     setIsProcessing(true);
+    console.log('⚙️ Processing set to true');
 
     try {
       const transactionNumber = generateTransactionNumber();
@@ -1779,16 +1856,43 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
       setActiveGcashInput(null);
       setCheckoutMessage(null);
       setIsSuccessModalOpen(true);
+      
+      // Show inventory deduction notification
+      if (Object.keys(requiredIngredients).length > 0) {
+        const notificationId = crypto.randomUUID();
+        setRealtimeNotifications(prev => [
+          ...prev,
+          {
+            id: notificationId,
+            message: `📦 Inventory deducted for order #${transactionNumber}`,
+            type: 'info',
+            timestamp: new Date()
+          }
+        ]);
+        
+        // Auto-dismiss after 5 seconds
+        setTimeout(() => {
+          setRealtimeNotifications(prev => prev.filter(n => n.id !== notificationId));
+        }, 5000);
+      }
     } catch (error: any) {
       console.error("Checkout failed:", error);
+      console.error("Error details:", JSON.stringify(error, null, 2));
+      console.error("Error message:", error.message);
+      console.error("Error code:", error.code);
+      
       if (error.message?.includes("OUT_OF_STOCK")) {
         const missingItems = error.message.split("|")[1].split(" | ").join("\n• ");
         setCheckoutMessage(`Checkout failed. Not enough stock:\n• ${missingItems}`);
       } else if (error.message?.includes("DB_MISSING")) {
         const missingItems = error.message.split("|")[1];
         setCheckoutMessage(`Database mismatch! Pakicheck spelling sa inventory, nawawala ang:\n• ${missingItems}`);
+      } else if (error.message?.includes("permission-denied") || error.code === 'permission-denied') {
+        setCheckoutMessage("Firebase permission error! Please check Firestore rules.");
+      } else if (error.message?.includes("unauthenticated") || error.code === 'unauthenticated') {
+        setCheckoutMessage("Authentication error! Please log in again.");
       } else {
-        setCheckoutMessage("Checkout failed. Please check your connection or try again.");
+        setCheckoutMessage(`Checkout failed: ${error.message || 'Unknown error'}`);
       }
     } finally {
       setIsProcessing(false);
@@ -1828,6 +1932,66 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
 
   return (
     <div className="flex h-full w-full overflow-hidden" style={{ background: "#ede8e3" }}>
+      {/* Real-time Notifications */}
+      {realtimeNotifications.length > 0 && (
+        <div className="fixed top-4 right-4 z-50 space-y-2 max-w-sm">
+          {realtimeNotifications.map((notification) => (
+            <div
+              key={notification.id}
+              className={`p-4 rounded-lg shadow-lg border transition-all duration-300 animate-fade-in-down ${
+                notification.type === 'error' 
+                  ? 'bg-red-50 border-red-200 text-red-800'
+                  : notification.type === 'warning'
+                  ? 'bg-yellow-50 border-yellow-200 text-yellow-800'
+                  : 'bg-blue-50 border-blue-200 text-blue-800'
+              }`}
+            >
+              <div className="flex items-start gap-2">
+                <div className="flex-shrink-0">
+                  {notification.type === 'error' && (
+                    <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                    </svg>
+                  )}
+                  {notification.type === 'warning' && (
+                    <svg className="w-5 h-5 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                    </svg>
+                  )}
+                  {notification.type === 'info' && (
+                    <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                  )}
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-medium">{notification.message}</p>
+                  <p className="text-xs opacity-75 mt-1">
+                    {notification.timestamp.toLocaleTimeString()}
+                  </p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Connection Status Indicator */}
+      <div className="fixed bottom-4 left-4 z-50">
+        <div className={`px-3 py-2 rounded-full text-xs font-medium transition-all ${
+          socketConnected 
+            ? 'bg-green-100 text-green-800 border border-green-200'
+            : 'bg-gray-100 text-gray-800 border border-gray-200'
+        }`}>
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${
+              socketConnected ? 'bg-green-500 animate-pulse' : 'bg-gray-400'
+            }`}></div>
+            {socketConnected ? 'Real-time Active' : 'Real-time Offline'}
+          </div>
+        </div>
+      </div>
+
       {/* Left Panel - Product Selection with Tabs */}
       <div className="flex-1 flex flex-col h-full min-w-0" style={{ background: "#ede8e3" }}>
         {/* Tab Bar - FIXED at top, never scrolls away */}
@@ -2821,6 +2985,9 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
                       const stockAvailable = inventoryStock[addOn]?.quantity || 0;
                       const reserved = alreadyInCartReserved[addOn] || 0;
                       const isOOS = (stockAvailable - reserved) < needed;
+                      
+                      // Debug logging for add-on availability
+                      console.log(`Add-on ${addOn}: needed=${needed}, available=${stockAvailable}, reserved=${reserved}, isOOS=${isOOS}`);
                       const isSelected = selectedAddOns.includes(addOn);
 
                       return (

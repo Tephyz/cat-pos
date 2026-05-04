@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:socket": "node server/standalone-socket.js",
+    "dev:full": "concurrently \"npm run dev\" \"npm run dev:socket\"",
     "build": "next build",
     "export": "next build",
     "start": "next start",
@@ -11,10 +13,13 @@
     "deploy": "npm run export && firebase deploy --only hosting"
   },
   "dependencies": {
+    "concurrently": "^9.2.1",
     "firebase": "^12.10.0",
     "next": "16.1.6",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -23,8 +28,8 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
+    "firebase-tools": "^12.2.0",
     "tailwindcss": "^4",
-    "typescript": "^5",
-    "firebase-tools": "^12.2.0"
+    "typescript": "^5"
   }
 }
