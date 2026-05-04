@@ -45,13 +45,13 @@ export default function RefundedOrdersPage() {
     }
 
     if (user) {
-      // Kukunin lang natin ang mga orders na may status na "refunded"
+      // Get only orders with status "refunded"
       const q = query(collection(db, "orders"), where("status", "==", "refunded"));
       
       const unsubscribe = onSnapshot(q, (snapshot) => {
         const records = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as OrderRecord));
         
-        // Sinu-sort natin from latest to oldest sa frontend para hindi na hingan ng index sa Firebase
+        // Sort from latest to oldest
         records.sort((a, b) => {
           const dateA = a.createdAt?.toDate()?.getTime() || 0;
           const dateB = b.createdAt?.toDate()?.getTime() || 0;
@@ -105,7 +105,7 @@ export default function RefundedOrdersPage() {
   return (
     <div className="flex flex-col h-[calc(100vh-64px)] w-full p-8 relative" style={{ background: "#ede8e3" }}>
       
-      <div className="mb-6 flex justify-between items-end">
+      <div className="mb-6 flex justify-between items-end flex-wrap gap-4">
         <div>
           <h1 className="text-3xl font-bold text-[#c0392b]">Refunded Orders</h1>
           <p className="text-[#a07850] mt-1">View voided transactions and returned items.</p>
@@ -143,72 +143,95 @@ export default function RefundedOrdersPage() {
         </div>
       </div>
 
-      {/* Orders Grid */}
-      <div className="flex-1 overflow-y-auto pr-2 pb-10 space-y-4">
+      {/* Orders Grid - 4 columns layout */}
+      <div className="flex-1 overflow-y-auto pr-2 pb-10">
         {filteredOrders.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 bg-white rounded-3xl border-[1.5px] border-[#e8ddd4]">
             <div className="w-16 h-16 mb-4 text-[#e8ddd4] rounded-full border-2 border-dashed border-[#e8ddd4] flex items-center justify-center">
-                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
             </div>
             <p className="text-[#a07850] text-lg font-medium">No refunded orders yet.</p>
           </div>
         ) : (
-          filteredOrders.map((order) => (
-            <div key={order.id} className="bg-white rounded-3xl p-6 shadow-sm border-[1.5px] border-[#e8ddd4] flex justify-between items-start hover:shadow-md hover:border-[#f5c6c6] transition-all">
-              
-              <div className="flex-1">
-                <h3 className="text-xl font-bold text-[#c0392b] line-through decoration-2 decoration-[#f5c6c6]">#{order.transactionNumber}</h3>
-                <p className="text-sm text-[#a07850] mb-4">{order.createdAt ? new Date(order.createdAt.toDate()).toLocaleString() : "Unknown Date"}</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+            {filteredOrders.map((order) => (
+              <div key={order.id} className="bg-white rounded-2xl p-5 shadow-sm border-[1.5px] border-[#e8ddd4] hover:shadow-md hover:border-[#f5c6c6] transition-all flex flex-col h-full">
                 
-                <div className="flex gap-2 items-center mb-4">
-                  <span className={`text-xs px-2.5 py-1 rounded-md font-bold uppercase tracking-wider ${order.paymentMethod === 'Cash' ? 'bg-[#3b2212] text-white' : 'bg-[#0070ba] text-white'}`}>
+                {/* Order Header */}
+                <div className="mb-4 pb-3 border-b border-[#e8ddd4]">
+                  <h3 className="text-lg font-bold text-[#c0392b] line-through decoration-2 decoration-[#f5c6c6] truncate">#{order.transactionNumber}</h3>
+                  <p className="text-sm text-[#a07850] mt-1.5">
+                    {order.createdAt ? new Date(order.createdAt.toDate()).toLocaleString() : "Unknown Date"}
+                  </p>
+                </div>
+                
+                {/* Order Total */}
+                <div className="mb-4">
+                  <p className="text-2xl font-bold text-[#c0392b]">₱{order.totalAmount.toFixed(2)}</p>
+                </div>
+                
+                {/* Order Meta Info */}
+                <div className="flex gap-2 items-center mb-3 flex-wrap">
+                  <span className={`text-sm px-2.5 py-1 rounded-md font-bold uppercase tracking-wider ${
+                    order.paymentMethod === 'Cash' ? 'bg-[#3b2212] text-white' : 'bg-[#0070ba] text-white'
+                  }`}>
                     {order.paymentMethod}
                   </span>
-                  <span className="text-xs text-[#a07850] bg-[#faf7f4] px-2.5 py-1 rounded-md border border-[#e8ddd4] font-medium">
-                    Cashier: {order.cashierName || 'Unknown'}
-                  </span>
-                  <span className="text-xs text-[#a07850] bg-[#faf7f4] px-2.5 py-1 rounded-md border border-[#e8ddd4] font-medium">
-                    {order.items?.length || 0} items
+                  <span className="text-sm text-[#a07850] bg-[#faf7f4] px-2.5 py-1 rounded-md border border-[#e8ddd4] font-medium">
+                    {order.items?.length || 0} item(s)
                   </span>
                 </div>
 
-                {/* Ordered Items List */}
-                <div className="space-y-2 mt-2 pt-4 border-t border-dashed border-[#e8ddd4] max-w-xl opacity-75">
-                  {order.items?.map((item, idx) => (
-                    <div key={idx} className="text-sm text-[#3b2212] flex items-start justify-between gap-4">
-                      <div className="flex gap-2">
-                        <span className="font-bold text-[#a07850] min-w-[24px]">{item.quantity}x</span> 
-                        <div>
-                          <span className="font-semibold">{item.name}</span>
-                          {item.size && <span className="text-xs text-[#6b4c30] ml-1.5">({item.size})</span>}
-                          {item.variant && <span className="text-xs text-[#6b4c30] ml-1.5">({item.variant})</span>}
-                          {item.addOns && item.addOns.length > 0 && (
-                            <span className="text-[11px] font-bold text-[#2d7a38] block mt-0.5 uppercase tracking-wide">
-                              + {item.addOns.join(', ')}
-                            </span>
-                          )}
+                {/* Cashier Name */}
+                <p className="text-sm text-[#6b4c30] mb-4 font-medium">
+                  Cashier: {order.cashierName || 'Unknown'}
+                </p>
+
+                {/* Order Items List */}
+                <div className="flex-1 mb-4">
+                  <div className="space-y-2 max-h-40 overflow-y-auto">
+                    {order.items?.slice(0, 4).map((item, idx) => (
+                      <div key={idx} className="text-sm opacity-75">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1">
+                            <span className="font-bold text-[#a07850] text-base">{item.quantity}x</span>{' '}
+                            <span className="font-semibold text-[#3b2212] text-base">{item.name}</span>
+                            {item.size && (
+                              <span className="text-xs text-[#6b4c30] ml-1 font-medium">
+                                ({item.size})
+                              </span>
+                            )}
+                          </div>
+                          <span className="font-semibold text-[#6b4c30] whitespace-nowrap text-base">
+                            ₱{(item.price * item.quantity).toFixed(0)}
+                          </span>
                         </div>
+                        {item.addOns && item.addOns.length > 0 && (
+                          <div className="ml-5 mt-1">
+                            <span className="text-xs text-[#2d7a38] font-medium">
+                              + {item.addOns.slice(0, 2).join(', ')}{item.addOns.length > 2 ? '...' : ''}
+                            </span>
+                          </div>
+                        )}
                       </div>
-                      <span className="font-semibold text-[#6b4c30]">
-                        ₱{(item.price * item.quantity).toFixed(2)}
-                      </span>
-                    </div>
-                  ))}
+                    ))}
+                    {order.items && order.items.length > 4 && (
+                      <p className="text-sm text-[#a07850] text-center pt-1 font-medium">
+                        +{order.items.length - 4} more item(s)
+                      </p>
+                    )}
+                  </div>
                 </div>
-              </div>
 
-              {/* Price & Actions Right Panel */}
-              <div className="text-right flex flex-col items-end gap-3 ml-6 shrink-0">
-                <p className="text-3xl font-bold text-[#c0392b]">₱{order.totalAmount.toFixed(2)}</p>
-                
-                <div className="flex gap-3 mt-2">
-                  <span className="text-sm font-bold bg-[#fff0f0] text-[#c0392b] border border-[#f5c6c6] px-5 py-2 rounded-xl uppercase tracking-widest shadow-sm">
+                {/* Refund Status Badge */}
+                <div className="mt-auto pt-4 border-t border-[#e8ddd4]">
+                  <span className="block text-center text-sm font-bold bg-[#fff0f0] text-[#c0392b] border border-[#f5c6c6] px-3 py-2 rounded-lg uppercase tracking-wide">
                     Refunded
                   </span>
                 </div>
               </div>
-            </div>
-          ))
+            ))}
+          </div>
         )}
       </div>
     </div>

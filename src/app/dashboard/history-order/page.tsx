@@ -222,7 +222,7 @@ export default function OrderHistoryPage() {
         </div>
       )}
 
-      <div className="mb-6 flex justify-between items-end">
+      <div className="mb-6 flex justify-between items-end flex-wrap gap-4">
         <div>
           <h1 className="text-3xl font-bold text-[#3b2212]">Order History</h1>
           <p className="text-[#a07850] mt-1">View past transactions and manage refunds.</p>
@@ -260,8 +260,8 @@ export default function OrderHistoryPage() {
         </div>
       </div>
 
-      {/* Orders Grid */}
-      <div className="flex-1 overflow-y-auto pr-2 pb-10 space-y-4">
+      {/* Orders Grid - 4 columns layout */}
+      <div className="flex-1 overflow-y-auto pr-2 pb-10">
         {filteredOrders.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 bg-white rounded-3xl border-[1.5px] border-[#e8ddd4]">
             <svg className="w-16 h-16 mb-4 text-[#e8ddd4]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -270,74 +270,109 @@ export default function OrderHistoryPage() {
             <p className="text-[#a07850] text-lg font-medium">No orders found.</p>
           </div>
         ) : (
-          filteredOrders.map((order) => (
-            <div key={order.id} className="bg-white rounded-3xl p-6 shadow-sm border-[1.5px] border-[#e8ddd4] flex justify-between items-start hover:shadow-md transition-all">
-              
-              <div className="flex-1">
-                <h3 className="text-xl font-bold text-[#3b2212]">#{order.transactionNumber}</h3>
-                <p className="text-sm text-[#a07850] mb-4">{order.createdAt ? new Date(order.createdAt.toDate()).toLocaleString() : "Unknown Date"}</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+            {filteredOrders.map((order) => (
+              <div key={order.id} className="bg-white rounded-2xl p-5 shadow-sm border-[1.5px] border-[#e8ddd4] hover:shadow-md transition-all flex flex-col h-full">
                 
-                <div className="flex gap-2 items-center mb-4">
-                  <span className={`text-xs px-2.5 py-1 rounded-md font-bold uppercase tracking-wider ${order.paymentMethod === 'Cash' ? 'bg-[#3b2212] text-white' : 'bg-[#0070ba] text-white'}`}>
+                {/* Order Header */}
+                <div className="mb-4 pb-3 border-b border-[#e8ddd4]">
+                  <h3 className="text-lg font-bold text-[#3b2212] truncate">#{order.transactionNumber}</h3>
+                  <p className="text-sm text-[#a07850] mt-1.5">
+                    {order.createdAt ? new Date(order.createdAt.toDate()).toLocaleString() : "Unknown Date"}
+                  </p>
+                </div>
+                
+                {/* Order Total */}
+                <div className="mb-4">
+                  <p className="text-2xl font-bold text-[#3b2212]">₱{order.totalAmount.toFixed(2)}</p>
+                </div>
+                
+                {/* Order Meta Info */}
+                <div className="flex gap-2 items-center mb-3 flex-wrap">
+                  <span className={`text-sm px-2.5 py-1 rounded-md font-bold uppercase tracking-wider ${
+                    order.paymentMethod === 'Cash' ? 'bg-[#3b2212] text-white' : 'bg-[#0070ba] text-white'
+                  }`}>
                     {order.paymentMethod}
                   </span>
-                  <span className="text-xs text-[#a07850] bg-[#faf7f4] px-2.5 py-1 rounded-md border border-[#e8ddd4] font-medium">
-                    Cashier: {order.cashierName || 'Unknown'}
-                  </span>
-                  <span className="text-xs text-[#a07850] bg-[#faf7f4] px-2.5 py-1 rounded-md border border-[#e8ddd4] font-medium">
-                    {order.items?.length || 0} items
+                  <span className="text-sm text-[#a07850] bg-[#faf7f4] px-2.5 py-1 rounded-md border border-[#e8ddd4] font-medium">
+                    {order.items?.length || 0} item(s)
                   </span>
                 </div>
 
-                <div className="space-y-2 mt-2 pt-4 border-t border-dashed border-[#e8ddd4] max-w-xl">
-                  {order.items?.map((item, idx) => (
-                    <div key={idx} className="text-sm text-[#3b2212] flex items-start justify-between gap-4">
-                      <div className="flex gap-2">
-                        <span className="font-bold text-[#a07850] min-w-[24px]">{item.quantity}x</span> 
-                        <div>
-                          <span className="font-semibold">{item.name}</span>
-                          {item.size && <span className="text-xs text-[#6b4c30] ml-1.5">({item.size})</span>}
-                          {item.variant && <span className="text-xs text-[#6b4c30] ml-1.5">({item.variant})</span>}
-                          {item.addOns && item.addOns.length > 0 && (
-                            <span className="text-[11px] font-bold text-[#2d7a38] block mt-0.5 uppercase tracking-wide">
-                              + {item.addOns.join(', ')}
-                            </span>
-                          )}
+                {/* Cashier Name */}
+                <p className="text-sm text-[#6b4c30] mb-4 font-medium">
+                  Cashier: {order.cashierName || 'Unknown'}
+                </p>
+
+                {/* Order Items List */}
+                <div className="flex-1 mb-4">
+                  <div className="space-y-2 max-h-40 overflow-y-auto">
+                    {order.items?.slice(0, 4).map((item, idx) => (
+                      <div key={idx} className="text-sm">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1">
+                            <span className="font-bold text-[#a07850] text-base">{item.quantity}x</span>{' '}
+                            <span className="font-semibold text-[#3b2212] text-base">{item.name}</span>
+                            {item.size && (
+                              <span className="text-xs text-[#6b4c30] ml-1 font-medium">
+                                ({item.size})
+                              </span>
+                            )}
+                          </div>
+                          <span className="font-semibold text-[#6b4c30] whitespace-nowrap text-base">
+                            ₱{(item.price * item.quantity).toFixed(0)}
+                          </span>
                         </div>
+                        {item.addOns && item.addOns.length > 0 && (
+                          <div className="ml-5 mt-1">
+                            <span className="text-xs text-[#2d7a38] font-medium">
+                              + {item.addOns.slice(0, 2).join(', ')}{item.addOns.length > 2 ? '...' : ''}
+                            </span>
+                          </div>
+                        )}
                       </div>
-                      <span className="font-semibold text-[#6b4c30]">
-                        ₱{(item.price * item.quantity).toFixed(2)}
-                      </span>
-                    </div>
-                  ))}
+                    ))}
+                    {order.items && order.items.length > 4 && (
+                      <p className="text-sm text-[#a07850] text-center pt-1 font-medium">
+                        +{order.items.length - 4} more item(s)
+                      </p>
+                    )}
+                  </div>
                 </div>
-              </div>
 
-              <div className="text-right flex flex-col items-end gap-3 ml-6 shrink-0">
-                <p className="text-3xl font-bold text-[#3b2212]">₱{order.totalAmount.toFixed(2)}</p>
-                
-                <div className="flex gap-3 mt-2">
-                  <button className="text-sm font-semibold text-[#6b4c30] hover:text-[#3b2212] underline decoration-[#e8ddd4] hover:decoration-[#3b2212] transition-colors py-1.5 px-2">
-                    View Receipt
-                  </button>
-                  
+                {/* Action Button */}
+                <div className="mt-auto pt-4 border-t border-[#e8ddd4]">
                   {order.status === 'refunded' ? (
-                    <span className="text-sm font-bold bg-[#fff0f0] text-[#c0392b] border border-[#f5c6c6] px-4 py-1.5 rounded-xl cursor-not-allowed opacity-80 uppercase tracking-wide">
+                    <span className="block text-center text-sm font-bold bg-[#fff0f0] text-[#c0392b] border border-[#f5c6c6] px-3 py-2 rounded-lg uppercase tracking-wide">
                       Refunded
                     </span>
                   ) : (
                     <button 
                       onClick={() => setOrderToRefund(order)} 
                       disabled={isProcessing === order.id}
-                      className={`text-sm font-bold text-white px-5 py-2 rounded-xl shadow-sm transition-all active:scale-95 flex items-center gap-2 ${isProcessing === order.id ? 'bg-[#e8e0d8] text-[#a07850] cursor-not-allowed' : 'bg-[#c0392b] hover:bg-[#a93226]'}`}
+                      className={`w-full text-base font-bold text-white px-3 py-2 rounded-lg shadow-sm transition-all active:scale-95 flex items-center justify-center gap-2 ${
+                        isProcessing === order.id 
+                          ? 'bg-[#e8e0d8] text-[#a07850] cursor-not-allowed' 
+                          : 'bg-[#c0392b] hover:bg-[#a93226]'
+                      }`}
                     >
-                      Refund Order
+                      {isProcessing === order.id ? (
+                        <>
+                          <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.3"></circle>
+                            <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round"></path>
+                          </svg>
+                          Processing...
+                        </>
+                      ) : (
+                        'Refund Order'
+                      )}
                     </button>
                   )}
                 </div>
               </div>
-            </div>
-          ))
+            ))}
+          </div>
         )}
       </div>
 
