@@ -16,15 +16,16 @@ interface OrderItem {
   price: number;
   addOns?: string[];
   variant?: string;
+  discountType?: "None" | "PWD" | "Senior";
+  discountCustomerName?: string;
+  discountCustomerID?: string;
 }
 
 interface Tab {
   id: string;
   name: string;
   orderItems: OrderItem[];
-  discount: "None" | "PWD" | "Senior";
-  discountCustomerName: string;
-  discountCustomerID: string;
+  bulkDiscount: "None" | "5%" | "10%";
   createdAt: Date;
 }
 
@@ -186,7 +187,6 @@ function DeleteConfirmModal({
     </div>
   );
 }
-
 // Manage Modal Component
 function ManageModal({ 
   isOpen, 
@@ -196,22 +196,24 @@ function ManageModal({
   onDeleteCategory,
   onDeleteItem,
   categories,
-  itemsByCategory
+  itemsByCategory,
+  categoryColors: existingCategoryColors
 }: { 
   isOpen: boolean; 
   onClose: () => void; 
-  onAddCategory: (categoryName: string) => void; 
-  onAddItem: (item: { name: string; price: number; color: string; category: string }) => void;
+  onAddCategory: (categoryName: string, color: string) => void; 
+  onAddItem: (item: { name: string; price: number; category: string }) => void;
   onDeleteCategory: (categoryName: string) => void;
   onDeleteItem: (categoryName: string, itemName: string) => void;
   categories: string[];
   itemsByCategory: Record<string, string[]>;
+  categoryColors: Record<string, { bg: string; hoverBg: string; activeBg: string; text: string }>;
 }) {
   const [activeTab, setActiveTab] = useState<"category" | "item">("category");
   const [categoryName, setCategoryName] = useState("");
+  const [categoryColor, setCategoryColor] = useState("#3b2212");
   const [itemName, setItemName] = useState("");
   const [itemPrice, setItemPrice] = useState("");
-  const [itemColor, setItemColor] = useState("#3b2212");
   const [selectedCategory, setSelectedCategory] = useState(categories[0] || "Coffee");
   const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
   
@@ -224,44 +226,67 @@ function ManageModal({
 
   if (!isOpen) return null;
 
+  // Get color for a category
+  const getCategoryColor = (categoryName: string) => {
+    const colors = existingCategoryColors[categoryName];
+    if (colors) return colors.activeBg;
+    return "#3b2212"; // default color
+  };
+
+  // Get background color for category dropdown item
+  const getCategoryBgColor = (categoryName: string) => {
+    const colors = existingCategoryColors[categoryName];
+    if (colors) return colors.bg;
+    return "#faf7f4";
+  };
+
   const handleAddCategory = () => {
     if (!categoryName.trim()) {
       setMessage({ text: "Please enter a category name", type: "error" });
+      setTimeout(() => setMessage(null), 2000);
       return;
     }
     if (categories.includes(categoryName.trim())) {
       setMessage({ text: "Category already exists!", type: "error" });
+      setTimeout(() => setMessage(null), 2000);
       return;
     }
-    onAddCategory(categoryName.trim());
-    setMessage({ text: `Category "${categoryName}" added!`, type: "success" });
+    onAddCategory(categoryName.trim(), categoryColor);
+    setMessage({ text: `Category "${categoryName}" added successfully!`, type: "success" });
     setCategoryName("");
+    setCategoryColor("#3b2212");
     setTimeout(() => setMessage(null), 2000);
   };
 
   const handleAddItem = () => {
     if (!itemName.trim()) {
       setMessage({ text: "Please enter an item name", type: "error" });
+      setTimeout(() => setMessage(null), 2000);
       return;
     }
     if (!itemPrice || parseFloat(itemPrice) <= 0) {
       setMessage({ text: "Please enter a valid price", type: "error" });
+      setTimeout(() => setMessage(null), 2000);
+      return;
+    }
+    if (!selectedCategory) {
+      setMessage({ text: "Please select a category", type: "error" });
+      setTimeout(() => setMessage(null), 2000);
       return;
     }
     if (itemsByCategory[selectedCategory]?.includes(itemName.trim())) {
       setMessage({ text: `Item "${itemName}" already exists in ${selectedCategory}!`, type: "error" });
+      setTimeout(() => setMessage(null), 2000);
       return;
     }
     onAddItem({
       name: itemName.trim(),
       price: parseFloat(itemPrice),
-      color: itemColor,
       category: selectedCategory,
     });
     setMessage({ text: `Item "${itemName}" added to ${selectedCategory}!`, type: "success" });
     setItemName("");
     setItemPrice("");
-    setItemColor("#3b2212");
     setTimeout(() => setMessage(null), 2000);
   };
 
@@ -276,7 +301,7 @@ function ManageModal({
       onDeleteItem(deleteConfirm.category, deleteConfirm.name);
     }
     setDeleteConfirm({ isOpen: false, type: "category", name: "" });
-    setMessage({ text: `${deleteConfirm.type === "category" ? "Category" : "Item"} deleted!`, type: "success" });
+    setMessage({ text: `${deleteConfirm.type === "category" ? "Category" : "Item"} deleted successfully!`, type: "success" });
     setTimeout(() => setMessage(null), 2000);
   };
 
@@ -335,6 +360,30 @@ function ManageModal({
                     onKeyPress={(e) => e.key === "Enter" && handleAddCategory()}
                   />
                 </div>
+
+                <div>
+                  <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>
+                    Category Color
+                  </label>
+                  <div className="flex gap-3 items-center">
+                    <input
+                      type="color"
+                      value={categoryColor}
+                      onChange={(e) => setCategoryColor(e.target.value)}
+                      className="w-16 h-12 rounded-lg cursor-pointer"
+                      style={{ border: "1.5px solid #e8ddd4" }}
+                    />
+                    <span className="text-sm" style={{ color: "#a07850" }}>
+                      Choose a color for the category cards
+                    </span>
+                  </div>
+                  <div className="mt-3 p-3 rounded-xl" style={{ background: `${categoryColor}20`, border: `1.5px solid ${categoryColor}` }}>
+                    <p className="text-sm font-semibold" style={{ color: categoryColor }}>
+                      Preview: {categoryName || "New Category"} items will use this color
+                    </p>
+                  </div>
+                </div>
+
                 <button
                   onClick={handleAddCategory}
                   className="w-full py-3 rounded-xl font-semibold text-lg transition-all active:scale-95 touch-manipulation"
@@ -343,27 +392,49 @@ function ManageModal({
                   + Add Category
                 </button>
 
+                {/* Notification under Add Category button */}
+                {message && (
+                  <div
+                    className={`p-3 rounded-xl text-center transition-all duration-300 ${
+                      message.type === "success" 
+                        ? "bg-green-50 text-green-700 border border-green-200" 
+                        : "bg-red-50 text-red-700 border border-red-200"
+                    }`}
+                    style={{
+                      animation: "fadeInUp 0.3s ease-out",
+                    }}
+                  >
+                    <span className="text-sm font-medium">{message.text}</span>
+                  </div>
+                )}
+
                 <div className="mt-6 pt-4 border-t" style={{ borderColor: "#e8ddd4" }}>
                   <h3 className="text-md font-semibold mb-3" style={{ color: "#3b2212" }}>
                     Existing Categories
                   </h3>
                   <div className="space-y-2 max-h-64 overflow-y-auto">
-                    {categories.map((cat) => (
-                      <div
-                        key={cat}
-                        className="flex justify-between items-center p-3 rounded-xl"
-                        style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4" }}
-                      >
-                        <span className="text-sm font-medium" style={{ color: "#3b2212" }}>{cat}</span>
-                        <button
-                          onClick={() => handleDeleteClick("category", cat)}
-                          className="px-3 py-1.5 rounded-lg text-sm font-semibold transition-all active:scale-95"
-                          style={{ background: "#fee2e2", color: "#c0392b" }}
+                    {categories.map((cat) => {
+                      const catColor = getCategoryColor(cat);
+                      return (
+                        <div
+                          key={cat}
+                          className="flex justify-between items-center p-3 rounded-xl"
+                          style={{ background: `${catColor}15`, border: `1.5px solid ${catColor}30` }}
                         >
-                          Delete
-                        </button>
-                      </div>
-                    ))}
+                          <div className="flex items-center gap-2">
+                            <div className="w-4 h-4 rounded-full" style={{ background: catColor }}></div>
+                            <span className="text-sm font-medium" style={{ color: catColor }}>{cat}</span>
+                          </div>
+                          <button
+                            onClick={() => handleDeleteClick("category", cat)}
+                            className="px-3 py-1.5 rounded-lg text-sm font-semibold transition-all active:scale-95"
+                            style={{ background: "#fee2e2", color: "#c0392b" }}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
@@ -379,12 +450,35 @@ function ManageModal({
                     value={selectedCategory}
                     onChange={(e) => setSelectedCategory(e.target.value)}
                     className="w-full rounded-xl px-4 py-3 text-base outline-none"
-                    style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
+                    style={{ 
+                      background: getCategoryBgColor(selectedCategory), 
+                      border: `1.5px solid ${getCategoryColor(selectedCategory)}30`,
+                      color: getCategoryColor(selectedCategory),
+                      fontWeight: "500"
+                    }}
                   >
-                    {categories.map((cat) => (
-                      <option key={cat} value={cat}>{cat}</option>
-                    ))}
+                    {categories.map((cat) => {
+                      const catColor = getCategoryColor(cat);
+                      return (
+                        <option 
+                          key={cat} 
+                          value={cat}
+                          style={{ 
+                            background: `${catColor}20`, 
+                            color: catColor,
+                            padding: "8px"
+                          }}
+                        >
+                          {cat}
+                        </option>
+                      );
+                    })}
                   </select>
+                  {selectedCategory && (
+                    <p className="text-xs mt-1.5" style={{ color: getCategoryColor(selectedCategory) }}>
+                      Items added to this category will use its color scheme
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -403,7 +497,7 @@ function ManageModal({
 
                 <div>
                   <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>
-                    Price (₱)
+                    Price (₱) - Medium Size
                   </label>
                   <input
                     type="number"
@@ -413,33 +507,34 @@ function ManageModal({
                     className="w-full rounded-xl px-4 py-3 text-base outline-none"
                     style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
                   />
-                </div>
-
-                <div>
-                  <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>
-                    Card Color
-                  </label>
-                  <div className="flex gap-3 items-center">
-                    <input
-                      type="color"
-                      value={itemColor}
-                      onChange={(e) => setItemColor(e.target.value)}
-                      className="w-16 h-12 rounded-lg cursor-pointer"
-                      style={{ border: "1.5px solid #e8ddd4" }}
-                    />
-                    <span className="text-sm" style={{ color: "#a07850" }}>
-                      Choose a color for the product card
-                    </span>
-                  </div>
+                  <p className="text-xs mt-1" style={{ color: "#a07850" }}>
+                    Large size price will be automatically set to +₱20
+                  </p>
                 </div>
 
                 <button
                   onClick={handleAddItem}
                   className="w-full py-3 rounded-xl font-semibold text-lg transition-all active:scale-95 touch-manipulation"
-                  style={{ background: "#3b2212", color: "white" }}
+                  style={{ background: selectedCategory ? getCategoryColor(selectedCategory) : "#3b2212", color: "white" }}
                 >
-                  + Add Item
+                  + Add Item to {selectedCategory || "Category"}
                 </button>
+
+                {/* Notification under Add Item button */}
+                {message && (
+                  <div
+                    className={`p-3 rounded-xl text-center transition-all duration-300 ${
+                      message.type === "success" 
+                        ? "bg-green-50 text-green-700 border border-green-200" 
+                        : "bg-red-50 text-red-700 border border-red-200"
+                    }`}
+                    style={{
+                      animation: "fadeInUp 0.3s ease-out",
+                    }}
+                  >
+                    <span className="text-sm font-medium">{message.text}</span>
+                  </div>
+                )}
 
                 <div className="mt-6 pt-4 border-t" style={{ borderColor: "#e8ddd4" }}>
                   <h3 className="text-md font-semibold mb-3" style={{ color: "#3b2212" }}>
@@ -447,22 +542,25 @@ function ManageModal({
                   </h3>
                   <div className="space-y-2 max-h-64 overflow-y-auto">
                     {itemsByCategory[selectedCategory]?.length > 0 ? (
-                      itemsByCategory[selectedCategory].map((item) => (
-                        <div
-                          key={item}
-                          className="flex justify-between items-center p-3 rounded-xl"
-                          style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4" }}
-                        >
-                          <span className="text-sm font-medium" style={{ color: "#3b2212" }}>{item}</span>
-                          <button
-                            onClick={() => handleDeleteClick("item", item, selectedCategory)}
-                            className="px-3 py-1.5 rounded-lg text-sm font-semibold transition-all active:scale-95"
-                            style={{ background: "#fee2e2", color: "#c0392b" }}
+                      itemsByCategory[selectedCategory].map((item) => {
+                        const catColor = getCategoryColor(selectedCategory);
+                        return (
+                          <div
+                            key={item}
+                            className="flex justify-between items-center p-3 rounded-xl"
+                            style={{ background: `${catColor}10`, border: `1.5px solid ${catColor}30` }}
                           >
-                            Delete
-                          </button>
-                        </div>
-                      ))
+                            <span className="text-sm font-medium" style={{ color: catColor }}>{item}</span>
+                            <button
+                              onClick={() => handleDeleteClick("item", item, selectedCategory)}
+                              className="px-3 py-1.5 rounded-lg text-sm font-semibold transition-all active:scale-95"
+                              style={{ background: "#fee2e2", color: "#c0392b" }}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        );
+                      })
                     ) : (
                       <p className="text-sm text-center py-4" style={{ color: "#c0b090" }}>
                         No items in this category yet
@@ -472,20 +570,23 @@ function ManageModal({
                 </div>
               </div>
             )}
-
-            {message && (
-              <div
-                className={`mt-4 p-3 rounded-xl text-center ${
-                  message.type === "success" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"
-                }`}
-                style={{ border: `1.5px solid ${message.type === "success" ? "#b6e2b6" : "#f5c6c6"}` }}
-              >
-                {message.text}
-              </div>
-            )}
           </div>
         </div>
       </div>
+
+      {/* Add CSS animation */}
+      <style jsx>{`
+        @keyframes fadeInUp {
+          from {
+            opacity: 0;
+            transform: translateY(10px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+      `}</style>
 
       <DeleteConfirmModal
         isOpen={deleteConfirm.isOpen}
@@ -498,7 +599,279 @@ function ManageModal({
   );
 }
 
-export default function POSLayout() {
+// Individual Discount Modal Component - BALANCED SIZE (BIGGER BUT FITS)
+function IndividualDiscountModal({ 
+  isOpen, 
+  onClose, 
+  onApply, 
+  itemName,
+  currentDiscount
+}: { 
+  isOpen: boolean; 
+  onClose: () => void; 
+  onApply: (discountType: "None" | "PWD" | "Senior", name: string, id: string) => void;
+  itemName: string;
+  currentDiscount: { type: "None" | "PWD" | "Senior"; name: string; id: string };
+}) {
+  const [discountType, setDiscountType] = useState<"PWD" | "Senior">(
+    currentDiscount.type !== "None" ? currentDiscount.type : "PWD"
+  );
+  const [activeInput, setActiveInput] = useState<"name" | "id" | null>(null);
+  const [tempName, setTempName] = useState(currentDiscount.name);
+  const [tempID, setTempID] = useState(currentDiscount.id);
+
+  const handleKeyPress = (key: string) => {
+    if (activeInput === "name") {
+      if (key === "BACKSPACE") {
+        setTempName(prev => prev.slice(0, -1));
+      } else if (key === "SPACE") {
+        setTempName(prev => prev + " ");
+      } else if (key === "CLEAR") {
+        setTempName("");
+      } else {
+        setTempName(prev => prev + key);
+      }
+    } else if (activeInput === "id") {
+      if (key === "BACKSPACE") {
+        setTempID(prev => prev.slice(0, -1));
+      } else if (key === "CLEAR") {
+        setTempID("");
+      } else if (/^[0-9]$/.test(key)) {
+        setTempID(prev => prev + key);
+      }
+    }
+  };
+
+  const handleApply = () => {
+    if (tempName.trim() && tempID.trim()) {
+      onApply(discountType, tempName, tempID);
+    }
+  };
+
+  const handleClose = () => {
+    // Reset temp values to current discount values when closing without applying
+    setTempName(currentDiscount.name);
+    setTempID(currentDiscount.id);
+    onClose();
+  };
+
+  if (!isOpen) return null;
+
+  // Remove Discount button should ONLY be enabled if a discount is ALREADY applied
+  const isRemoveButtonEnabled = currentDiscount.type !== "None";
+  
+  // Apply button should be enabled if name and ID are filled
+  const isApplyButtonEnabled = tempName.trim() && tempID.trim();
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-[70] p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl">
+        <div className="p-6">
+          {/* Header */}
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-2xl font-bold" style={{ color: "#3b2212" }}>
+              Apply Discount
+            </h2>
+            <button
+              onClick={handleClose}
+              className="w-9 h-9 rounded-full flex items-center justify-center text-xl"
+              style={{ background: "#f7f3ef", color: "#3b2212", border: "1px solid #e8ddd4" }}
+            >
+              ✕
+            </button>
+          </div>
+          
+          <p className="text-sm mb-5" style={{ color: "#a07850" }}>
+            {itemName.length > 45 ? itemName.substring(0, 42) + "..." : itemName} - 20% off
+          </p>
+
+          {/* Discount Type Buttons - PWD and Senior only */}
+          <div className="flex gap-3 mb-5">
+            {(["PWD", "Senior"] as const).map((type) => (
+              <button
+                key={type}
+                onClick={() => setDiscountType(type)}
+                className={`flex-1 py-2.5 rounded-xl font-semibold text-base transition-all active:scale-95 ${
+                  discountType === type
+                    ? "bg-[#3b2212] text-white"
+                    : "bg-[#faf7f4] text-[#3b2212] border border-[#e8ddd4]"
+                }`}
+              >
+                {type}
+              </button>
+            ))}
+          </div>
+
+          {/* Two Column Layout for Name and ID */}
+          <div className="grid grid-cols-2 gap-4 mb-5">
+            {/* Left Column - Customer Name */}
+            <div>
+              <label className="text-sm font-semibold block mb-1.5" style={{ color: "#3b2212" }}>
+                Customer Name <span style={{ color: "#c0392b" }}>*</span>
+              </label>
+              <div
+                onClick={() => setActiveInput("name")}
+                className={`w-full rounded-xl px-4 py-3 text-base transition-all cursor-pointer ${
+                  activeInput === "name" ? "ring-2 ring-[#3b2212]" : ""
+                }`}
+                style={{
+                  background: "#faf7f4",
+                  border: "1.5px solid #e8ddd4",
+                  color: "#3b2212",
+                  minHeight: "48px",
+                }}
+              >
+                {tempName || <span style={{ color: "#c0b090" }}>Tap to enter name...</span>}
+              </div>
+            </div>
+
+            {/* Right Column - ID Number */}
+            <div>
+              <label className="text-sm font-semibold block mb-1.5" style={{ color: "#3b2212" }}>
+                ID Number <span style={{ color: "#c0392b" }}>*</span>
+              </label>
+              <div
+                onClick={() => setActiveInput("id")}
+                className={`w-full rounded-xl px-4 py-3 text-base transition-all cursor-pointer font-mono ${
+                  activeInput === "id" ? "ring-2 ring-[#3b2212]" : ""
+                }`}
+                style={{
+                  background: "#faf7f4",
+                  border: "1.5px solid #e8ddd4",
+                  color: "#3b2212",
+                  minHeight: "48px",
+                }}
+              >
+                {tempID || <span style={{ color: "#c0b090" }}>Tap to enter ID number...</span>}
+              </div>
+            </div>
+          </div>
+
+          {/* Custom Keyboard */}
+          {activeInput && (
+            <div className="mt-4 pt-4 border-t" style={{ borderColor: "#e8ddd4" }}>
+              <div className="flex justify-between items-center mb-3">
+                <p className="text-sm font-semibold" style={{ color: "#3b2212" }}>
+                  Enter {activeInput === "name" ? "Customer Name" : "ID Number"}
+                </p>
+              </div>
+              
+              {activeInput === "name" ? (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-10 gap-1.5">
+                    {["Q","W","E","R","T","Y","U","I","O","P"].map((key) => (
+                      <button key={key} onClick={() => handleKeyPress(key)}
+                        className="py-2 rounded-lg font-semibold text-base transition-all active:scale-95"
+                        style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
+                        {key}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-9 gap-1.5">
+                    {["A","S","D","F","G","H","J","K","L"].map((key) => (
+                      <button key={key} onClick={() => handleKeyPress(key)}
+                        className="py-2 rounded-lg font-semibold text-base transition-all active:scale-95"
+                        style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
+                        {key}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-9 gap-1.5">
+                    {["Z","X","C","V","B","N","M"].map((key) => (
+                      <button key={key} onClick={() => handleKeyPress(key)}
+                        className="py-2 rounded-lg font-semibold text-base transition-all active:scale-95"
+                        style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
+                        {key}
+                      </button>
+                    ))}
+                    <button onClick={() => handleKeyPress("SPACE")}
+                      className="py-2 rounded-lg font-semibold text-sm transition-all active:scale-95 col-span-2"
+                      style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
+                      SPACE
+                    </button>
+                    <button onClick={() => handleKeyPress("BACKSPACE")}
+                      className="py-2 rounded-lg font-semibold text-base transition-all active:scale-95"
+                      style={{ background: "#fee2e2", color: "#c0392b", border: "1px solid #f5c6c6" }}>
+                      ⌫
+                    </button>
+                    <button onClick={() => handleKeyPress("CLEAR")}
+                      className="py-2 rounded-lg font-semibold text-sm transition-all active:scale-95"
+                      style={{ background: "#fff0f0", color: "#c0392b", border: "1px solid #f5c6c6" }}>
+                      CLEAR
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div className="grid grid-cols-3 gap-2 mb-2">
+                    {["1","2","3","4","5","6","7","8","9"].map((num) => (
+                      <button key={num} onClick={() => handleKeyPress(num)}
+                        className="py-3.5 rounded-xl font-bold text-2xl transition-all active:scale-95"
+                        style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
+                        {num}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button onClick={() => handleKeyPress("CLEAR")}
+                      className="py-3.5 rounded-xl font-bold text-base transition-all active:scale-95"
+                      style={{ background: "#fff0f0", color: "#c0392b", border: "1.5px solid #f5c6c6" }}>
+                      CLEAR
+                    </button>
+                    <button onClick={() => handleKeyPress("0")}
+                      className="py-3.5 rounded-xl font-bold text-2xl transition-all active:scale-95"
+                      style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
+                      0
+                    </button>
+                    <button onClick={() => handleKeyPress("BACKSPACE")}
+                      className="py-3.5 rounded-xl font-bold text-2xl transition-all active:scale-95"
+                      style={{ background: "#fee2e2", color: "#c0392b", border: "1.5px solid #f5c6c6" }}>
+                      ⌫
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Action Buttons */}
+          <div className="flex gap-4 mt-6">
+            <button
+              disabled={!isRemoveButtonEnabled}
+              onClick={() => {
+                onApply("None", "", "");
+                onClose();
+              }}
+              className="flex-1 py-3 rounded-xl font-semibold text-base transition-all active:scale-95"
+              style={{
+                background: !isRemoveButtonEnabled ? "#e8e0d8" : "#f0e8e0",
+                color: !isRemoveButtonEnabled ? "#b09070" : "#3b2212",
+                cursor: !isRemoveButtonEnabled ? "not-allowed" : "pointer"
+              }}
+            >
+              Remove Discount
+            </button>
+            <button
+              disabled={!isApplyButtonEnabled}
+              onClick={handleApply}
+              className="flex-1 py-3 rounded-xl font-semibold text-base transition-all active:scale-95"
+              style={{
+                background: !isApplyButtonEnabled ? "#e8e0d8" : "#2d7a38",
+                color: !isApplyButtonEnabled ? "#b09070" : "white",
+                cursor: !isApplyButtonEnabled ? "not-allowed" : "pointer",
+              }}
+            >
+              Apply Discount
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+
+
+}export default function POSLayout() {
   const { user, loading, logout } = useAuth();
   const router = useRouter();
 
@@ -542,9 +915,7 @@ export default function POSLayout() {
       id: crypto.randomUUID(),
       name: "Customer 1",
       orderItems: [],
-      discount: "None",
-      discountCustomerName: "",
-      discountCustomerID: "",
+      bulkDiscount: "None",
       createdAt: new Date(),
     }
   ]);
@@ -571,6 +942,7 @@ export default function POSLayout() {
   const [cashModal, setCashModal] = useState(false);
   const [gcashRefModal, setGcashRefModal] = useState(false);
   const [isManageModalOpen, setIsManageModalOpen] = useState(false);
+  const [discountModalItem, setDiscountModalItem] = useState<{ index: number; item: OrderItem } | null>(null);
 
   const [dynamicProducts, setDynamicProducts] = useState<Record<string, string[]>>({});
   const [dynamicPrices, setDynamicPrices] = useState<Record<string, { M: number; L: number }>>({});
@@ -595,18 +967,9 @@ export default function POSLayout() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
-  const [discountModal, setDiscountModal] = useState(false);
-  const [pendingDiscount, setPendingDiscount] = useState<"PWD" | "Senior" | null>(null);
-  
-  const [activeInput, setActiveInput] = useState<"name" | "id" | null>(null);
-  const [tempName, setTempName] = useState("");
-  const [tempID, setTempID] = useState("");
-
   const activeTab = tabs.find(tab => tab.id === activeTabId);
   const orderItems = activeTab?.orderItems || [];
-  const discount = activeTab?.discount || "None";
-  const discountCustomerNameTab = activeTab?.discountCustomerName || "";
-  const discountCustomerIDTab = activeTab?.discountCustomerID || "";
+  const bulkDiscount = activeTab?.bulkDiscount || "None";
 
   const updateActiveTabOrderItems = (newOrderItems: OrderItem[]) => {
     setTabs(prev => prev.map(tab => 
@@ -614,10 +977,22 @@ export default function POSLayout() {
     ));
   };
 
-  const updateActiveTabDiscount = (newDiscount: "None" | "PWD" | "Senior", name: string, id: string) => {
+  const updateActiveTabBulkDiscount = (newDiscount: "None" | "5%" | "10%") => {
     setTabs(prev => prev.map(tab => 
-      tab.id === activeTabId ? { ...tab, discount: newDiscount, discountCustomerName: name, discountCustomerID: id } : tab
+      tab.id === activeTabId ? { ...tab, bulkDiscount: newDiscount } : tab
     ));
+  };
+
+  const updateItemDiscount = (index: number, discountType: "None" | "PWD" | "Senior", name: string, id: string) => {
+    const newOrderItems = orderItems.map((item, i) =>
+      i === index ? { 
+        ...item, 
+        discountType, 
+        discountCustomerName: discountType !== "None" ? name : "",
+        discountCustomerID: discountType !== "None" ? id : ""
+      } : item
+    );
+    updateActiveTabOrderItems(newOrderItems);
   };
 
   const createNewTab = () => {
@@ -627,9 +1002,7 @@ export default function POSLayout() {
       id: newTabId,
       name: `Customer ${newTabNumber}`,
       orderItems: [],
-      discount: "None",
-      discountCustomerName: "",
-      discountCustomerID: "",
+      bulkDiscount: "None",
       createdAt: new Date(),
     };
     setTabs(prev => [...prev, newTab]);
@@ -648,7 +1021,7 @@ export default function POSLayout() {
       if (confirm("Clear all items in this tab?")) {
         setTabs(prev => prev.map(tab => 
           tab.id === tabId 
-            ? { ...tab, orderItems: [], discount: "None", discountCustomerName: "", discountCustomerID: "" } 
+            ? { ...tab, orderItems: [], bulkDiscount: "None" } 
             : tab
         ));
       }
@@ -723,7 +1096,6 @@ export default function POSLayout() {
 
   const allProducts: Record<string, string[]> = { ...products };
   
-  // Imbes na i-overwrite, idudugtong natin yung mga items galing Firebase sa default items
   Object.keys(dynamicProducts).forEach(cat => {
     if (allProducts[cat]) {
       allProducts[cat] = [...allProducts[cat], ...dynamicProducts[cat]];
@@ -857,37 +1229,47 @@ export default function POSLayout() {
 
   const ADD_ON_PRICE = 30;
 
-  const handleAddCategory = (categoryName: string) => {
-    setDynamicProducts(prev => ({
-      ...prev,
-      [categoryName]: []
-    }));
-    if (!categoryColors[categoryName]) {
-      categoryColors[categoryName] = { bg: "#f5f5f5", hoverBg: "#eeeeee", activeBg: "#3b2212", text: "#6b4c30" };
-    }
+  const handleAddCategory = (categoryName: string, color: string) => {
+  setDynamicProducts(prev => ({
+    ...prev,
+    [categoryName]: []
+  }));
+  
+  // Create a lighter version for bg (20% opacity)
+  const bgColor = `${color}20`;
+  const hoverBgColor = `${color}30`;
+  
+  categoryColors[categoryName] = { 
+    bg: bgColor, 
+    hoverBg: hoverBgColor, 
+    activeBg: color, 
+    text: color 
   };
+};
 
-  const handleAddItem = (item: { name: string; price: number; color: string; category: string }) => {
-    setDynamicProducts(prev => ({
-      ...prev,
-      [item.category]: [...(prev[item.category] || []), item.name]
-    }));
-    
-    setDynamicPrices(prev => ({
-      ...prev,
-      [item.name]: { M: item.price, L: item.price + 20 }
-    }));
-    
-    const color = item.color;
-    setDynamicItemColors(prev => ({
-      ...prev,
-      [item.name]: { 
-        bg: `${color}20`, 
-        activeBg: color,
-        text: color 
-      }
-    }));
-  };
+const handleAddItem = (item: { name: string; price: number; category: string }) => {
+  setDynamicProducts(prev => ({
+    ...prev,
+    [item.category]: [...(prev[item.category] || []), item.name]
+  }));
+  
+  setDynamicPrices(prev => ({
+    ...prev,
+    [item.name]: { M: item.price, L: item.price + 20 }
+  }));
+  
+  // Get the category's color
+  const categoryColor = categoryColors[item.category]?.activeBg || "#3b2212";
+  
+  setDynamicItemColors(prev => ({
+    ...prev,
+    [item.name]: { 
+      bg: `${categoryColor}20`, 
+      activeBg: categoryColor,
+      text: categoryColor 
+    }
+  }));
+};
 
   const handleDeleteCategory = (categoryName: string) => {
     const defaultCategories = ["Coffee", "Non Coffee", "Milktea", "Yakult Mix", "Fruit Tea", "Hot Tea", "Frappe", "Food & Bites"];
@@ -1114,7 +1496,6 @@ export default function POSLayout() {
     });
   }
 
-
   const getModalPrice = (): number => {
     if (!selectedProduct) return 0;
     if (isFood) {
@@ -1163,6 +1544,9 @@ export default function POSLayout() {
       quantity: 1,
       price,
       addOns: selectedAddOns.length > 0 ? selectedAddOns : undefined,
+      discountType: "None",
+      discountCustomerName: "",
+      discountCustomerID: "",
     };
 
     updateActiveTabOrderItems([...orderItems, newItem]);
@@ -1182,16 +1566,30 @@ export default function POSLayout() {
   };
   const handleClearAddOns = () => setSelectedAddOns([]);
 
-  const subtotal = orderItems.reduce(
-    (acc, item) => acc + item.price * item.quantity,
-    0
-  );
+  // Calculate subtotal with individual item discounts
+  const calculateSubtotal = () => {
+    let total = 0;
+    orderItems.forEach(item => {
+      let itemTotal = item.price * item.quantity;
+      if (item.discountType === "PWD" || item.discountType === "Senior") {
+        itemTotal = itemTotal * 0.8; // 20% discount
+      }
+      total += itemTotal;
+    });
+    return total;
+  };
 
+  const subtotal = calculateSubtotal();
+
+  // Apply bulk discount (5% or 10% on total after individual discounts)
   let discountAmount = 0;
   let total = subtotal;
 
-  if (discount === "PWD" || discount === "Senior") {
-    discountAmount = subtotal * 0.20;
+  if (bulkDiscount === "5%") {
+    discountAmount = subtotal * 0.05;
+    total = subtotal - discountAmount;
+  } else if (bulkDiscount === "10%") {
+    discountAmount = subtotal * 0.10;
     total = subtotal - discountAmount;
   }
 
@@ -1205,9 +1603,7 @@ export default function POSLayout() {
     return `TXN-${date}-${seq}`;
   };
 
-  // ---------------------------------------------------------
-  // FIXED CHECKOUT PROCESS (BULLETPROOF UPDATES WITH FIFO BATCHES)
-  // ---------------------------------------------------------
+  // Updated processCheckout to include individual discounts
   const processCheckout = async (paymentMethod: "Cash" | "GCash", senderNumber?: string, senderName?: string) => {
     if (orderItems.length === 0) {
       setCheckoutMessage("No items in the cart to checkout.");
@@ -1228,19 +1624,28 @@ export default function POSLayout() {
           sugar: item.sugar ?? "",
           quantity: item.quantity,
           price: item.price,
+          discountedPrice: item.discountType && item.discountType !== "None" ? item.price * 0.8 : item.price,
         };
         if (Array.isArray(item.addOns) && item.addOns.length > 0) cleaned.addOns = item.addOns;
         if (typeof item.variant !== "undefined") cleaned.variant = item.variant;
+        if (item.discountType && item.discountType !== "None") {
+          cleaned.discount = {
+            type: item.discountType,
+            rate: 0.20,
+            amount: item.price - (item.price * 0.8),
+            customerName: item.discountCustomerName,
+            customerID: item.discountCustomerID
+          };
+        }
         return cleaned;
       });
 
       const orderPayload = {
         transactionNumber,
         items: sanitizedItems,
+        subtotal: subtotal,
+        discount: bulkDiscount !== "None" ? { type: bulkDiscount, rate: bulkDiscount === "5%" ? 0.05 : 0.10, amount: discountAmount } : null,
         totalAmount: total,
-        discount: discount !== "None"
-          ? { type: discount, rate: 0.20, amount: discountAmount, customerName: discountCustomerNameTab, customerID: discountCustomerIDTab }
-          : null,
         paymentMethod,
         gcashSenderName: paymentMethod === "GCash" ? (senderName ?? null) : null,
         gcashNumber: paymentMethod === "GCash" ? (senderNumber ?? null) : null,
@@ -1304,11 +1709,9 @@ export default function POSLayout() {
               if (currentStock < item.needed) {
                 outOfStockItems.push(`${item.name} (Need: ${item.needed}${unit}, Stock: ${currentStock}${unit})`);
               } else {
-                // --- FIFO BATCH DEDUCTION LOGIC ---
                 let remainingNeeded = item.needed;
                 const batches = Array.isArray(data.stockBatches) ? [...data.stockBatches] : [];
 
-                // Sort batches oldest to newest based on receivedAt
                 batches.sort((a, b) => {
                   const dateA = a.receivedAt ? new Date(a.receivedAt).getTime() : 0;
                   const dateB = b.receivedAt ? new Date(b.receivedAt).getTime() : 0;
@@ -1325,7 +1728,7 @@ export default function POSLayout() {
                       remainingNeeded = 0;
                     } else {
                       remainingNeeded -= batchQty;
-                      batch.quantity = 0; // Ubos na itong batch
+                      batch.quantity = 0;
                     }
                   }
                   return batch;
@@ -1348,7 +1751,6 @@ export default function POSLayout() {
           transaction.set(orderDocRef, orderPayload);
           
           for (const update of stockUpdates) {
-            // Update pareho ang root quantity at ang stockBatches!
             transaction.update(update.ref, { 
               quantity: update.newQty,
               stockBatches: update.newBatches
@@ -1368,7 +1770,7 @@ export default function POSLayout() {
       });
       
       updateActiveTabOrderItems([]);
-      updateActiveTabDiscount("None", "", "");
+      updateActiveTabBulkDiscount("None");
       setAmountTendered("");
       setCashModal(false);
       setGcashRefModal(false);
@@ -1414,53 +1816,6 @@ export default function POSLayout() {
       return frappeSubColors[sub];
     }
     return categoryColors[topLevel] ?? { bg: "#f5f5f5", hoverBg: "#eeeeee", activeBg: "#3b2212", text: "#6b4c30" };
-  };
-
-  const handleKeyPress = (key: string) => {
-    if (activeInput === "name") {
-      if (key === "BACKSPACE") {
-        setTempName(prev => prev.slice(0, -1));
-      } else if (key === "SPACE") {
-        setTempName(prev => prev + " ");
-      } else if (key === "CLEAR") {
-        setTempName("");
-      } else {
-        setTempName(prev => prev + key);
-      }
-    } else if (activeInput === "id") {
-      if (key === "BACKSPACE") {
-        setTempID(prev => prev.slice(0, -1));
-      } else if (key === "CLEAR") {
-        setTempID("");
-      } else if (/^[0-9]$/.test(key)) {
-        setTempID(prev => prev + key);
-      }
-    }
-  };
-
-  const openDiscountModal = (discountType: "PWD" | "Senior") => {
-    setPendingDiscount(discountType);
-    setDiscountModal(true);
-    setTempName(discountCustomerNameTab);
-    setTempID(discountCustomerIDTab);
-    setActiveInput(null);
-  };
-
-  const applyDiscount = () => {
-    if (tempName.trim() && tempID.trim()) {
-      if (pendingDiscount) {
-        updateActiveTabDiscount(pendingDiscount, tempName, tempID);
-      }
-      setDiscountModal(false);
-      setPendingDiscount(null);
-      setActiveInput(null);
-    }
-  };
-
-  const cancelDiscount = () => {
-    setDiscountModal(false);
-    setPendingDiscount(null);
-    setActiveInput(null);
   };
 
   const allCategories = Object.keys(allProducts);
@@ -1785,119 +2140,123 @@ export default function POSLayout() {
             </div>
           ) : (
             <div className="flex-1 overflow-y-auto space-y-3 pr-1 min-h-0" style={{ WebkitOverflowScrolling: "touch" }}>
-              {orderItems.map((item, index) => (
-                <div key={index} className="p-3"
-                  style={{ borderBottom: "0.5px solid #e8ddd4" }}>
-                  <div className="flex justify-between items-start">
-                    <div className="flex-1">
-                      <p className="font-semibold text-base" style={{ color: "#3b2212" }}>{item.name}</p>
-                      {item.category && !item.category.includes("Food & Bites") && (
-                        <p className="text-xs mt-0.5 font-medium" style={{ color: "#3b2212", opacity: 0.5 }}>{item.category}</p>
-                      )}
-                      {(item.temperature || item.size || item.sugar) && (
-                        <p className="text-xs mt-0.5" style={{ color: "#a07850" }}>
-                          {[item.temperature, item.size, item.sugar && `Sugar ${item.sugar}`].filter(Boolean).join(" · ")}
-                        </p>
-                      )}
-                      {item.addOns && item.addOns.length > 0 && (
-                        <p className="text-xs mt-0.5" style={{ color: "#5a8a5a" }}>+ {item.addOns.join(", ")}</p>
-                      )}
-                    </div>
-                    <div className="flex flex-col items-end gap-2 ml-2">
-                      <p className="font-normal text-base" style={{ color: "#3b2212" }}>₱{(item.price * item.quantity).toFixed(0)}</p>
-                      <div className="flex items-center gap-2 mt-1">
-                        <button onClick={() => handleDecreaseQty(index)}
-                          className="w-10 h-10 rounded-full flex items-center justify-center font-bold active:scale-95 touch-manipulation"
-                          style={{ background: "#f0e8e0", color: "#3b2212", fontSize: "20px" }}>−</button>
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          value={qtyInputs[index] !== undefined ? qtyInputs[index] : String(item.quantity)}
-                          onChange={(e) => {
-                            const raw = e.target.value.replace(/[^0-9]/g, "");
-                            setQtyInputs(prev => ({ ...prev, [index]: raw }));
-                            const val = parseInt(raw);
-                            if (!isNaN(val) && val >= 1) {
-                              const newOrderItems = orderItems.map((o, i) => i === index ? { ...o, quantity: val } : o);
-                              updateActiveTabOrderItems(newOrderItems);
-                            }
-                          }}
-                          onBlur={() => {
-                            const raw = qtyInputs[index];
-                            const val = parseInt(raw);
-                            if (!raw || isNaN(val) || val < 1) {
-                              const newOrderItems = orderItems.map((o, i) => i === index ? { ...o, quantity: 1 } : o);
-                              updateActiveTabOrderItems(newOrderItems);
-                            }
-                            setQtyInputs(prev => { const next = { ...prev }; delete next[index]; return next; });
-                          }}
-                          className="text-lg font-semibold text-center outline-none rounded-lg"
-                          style={{ width: "55px", color: "#3b2212", background: "#faf7f4", border: "1.5px solid #e8ddd4", padding: "8px 4px" }}
-                        />
-                        <button onClick={() => handleIncreaseQty(index)}
-                          className="w-10 h-10 rounded-full flex items-center justify-center font-bold active:scale-95 touch-manipulation"
-                          style={{ background: "#3b2212", color: "white", fontSize: "20px" }}>+</button>
+              {orderItems.map((item, index) => {
+                const itemTotal = item.price * item.quantity;
+                const discountedTotal = (item.discountType === "PWD" || item.discountType === "Senior") 
+                  ? itemTotal * 0.8 
+                  : itemTotal;
+                const discountApplied = item.discountType !== "None";
+                
+                return (
+                  <div key={index} className="p-3 relative" style={{ borderBottom: "0.5px solid #e8ddd4" }}>
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <p className="font-semibold text-base" style={{ color: "#3b2212" }}>{item.name}</p>
+                        {item.category && !item.category.includes("Food & Bites") && (
+                          <p className="text-xs mt-0.5 font-medium" style={{ color: "#3b2212", opacity: 0.5 }}>{item.category}</p>
+                        )}
+                        {(item.temperature || item.size || item.sugar) && (
+                          <p className="text-xs mt-0.5" style={{ color: "#a07850" }}>
+                            {[item.temperature, item.size, item.sugar && `Sugar ${item.sugar}`].filter(Boolean).join(" · ")}
+                          </p>
+                        )}
+                        {item.addOns && item.addOns.length > 0 && (
+                          <p className="text-xs mt-0.5" style={{ color: "#5a8a5a" }}>+ {item.addOns.join(", ")}</p>
+                        )}
+                        {discountApplied && (
+                          <p className="text-xs mt-1 font-semibold" style={{ color: "#2d7a38" }}>
+                            {item.discountType} Discount Applied
+                          </p>
+                        )}
                       </div>
-                      <button onClick={() => handleRemoveItem(index)}
-                        className="text-sm rounded-full w-8 h-8 flex items-center justify-center mt-1 active:scale-95 touch-manipulation"
-                        style={{ background: "#fee2e2", color: "#c0392b" }}>✕</button>
+                      <div className="flex flex-col items-end gap-2 ml-2">
+                        <div className="text-right">
+                          {discountApplied ? (
+                            <>
+                              <p className="text-xs line-through" style={{ color: "#a07850" }}>₱{itemTotal.toFixed(0)}</p>
+                              <p className="font-semibold text-base" style={{ color: "#2d7a38" }}>₱{discountedTotal.toFixed(0)}</p>
+                            </>
+                          ) : (
+                            <p className="font-normal text-base" style={{ color: "#3b2212" }}>₱{itemTotal.toFixed(0)}</p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          <button onClick={() => handleDecreaseQty(index)}
+                            className="w-10 h-10 rounded-full flex items-center justify-center font-bold active:scale-95 touch-manipulation"
+                            style={{ background: "#f0e8e0", color: "#3b2212", fontSize: "20px" }}>−</button>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={qtyInputs[index] !== undefined ? qtyInputs[index] : String(item.quantity)}
+                            onChange={(e) => {
+                              const raw = e.target.value.replace(/[^0-9]/g, "");
+                              setQtyInputs(prev => ({ ...prev, [index]: raw }));
+                              const val = parseInt(raw);
+                              if (!isNaN(val) && val >= 1) {
+                                const newOrderItems = orderItems.map((o, i) => i === index ? { ...o, quantity: val } : o);
+                                updateActiveTabOrderItems(newOrderItems);
+                              }
+                            }}
+                            onBlur={() => {
+                              const raw = qtyInputs[index];
+                              const val = parseInt(raw);
+                              if (!raw || isNaN(val) || val < 1) {
+                                const newOrderItems = orderItems.map((o, i) => i === index ? { ...o, quantity: 1 } : o);
+                                updateActiveTabOrderItems(newOrderItems);
+                              }
+                              setQtyInputs(prev => { const next = { ...prev }; delete next[index]; return next; });
+                            }}
+                            className="text-lg font-semibold text-center outline-none rounded-lg"
+                            style={{ width: "55px", color: "#3b2212", background: "#faf7f4", border: "1.5px solid #e8ddd4", padding: "8px 4px" }}
+                          />
+                          <button onClick={() => handleIncreaseQty(index)}
+                            className="w-10 h-10 rounded-full flex items-center justify-center font-bold active:scale-95 touch-manipulation"
+                            style={{ background: "#3b2212", color: "white", fontSize: "20px" }}>+</button>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setDiscountModalItem({ index, item })}
+                            className={`text-sm rounded-lg px-3 py-1.5 font-semibold transition-all active:scale-95 touch-manipulation ${
+                              discountApplied ? "bg-[#2d7a38] text-white" : "bg-[#f0e8e0] text-[#3b2212]"
+                            }`}
+                          >
+                            {discountApplied ? "✎ Discount" : "Add Discount"}
+                          </button>
+                          <button onClick={() => handleRemoveItem(index)}
+                            className="text-sm rounded-full w-8 h-8 flex items-center justify-center active:scale-95 touch-manipulation"
+                            style={{ background: "#fee2e2", color: "#c0392b" }}>✕</button>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
           {orderItems.length > 0 && (
             <div className="py-4 space-y-2 mt-2" style={{ borderTop: "1.5px solid #e8ddd4" }}>
               <div className="mb-1">
-                <p className="text-xs mb-1.5" style={{ color: "#a07850" }}>Discount</p>
+                <p className="text-xs mb-1.5" style={{ color: "#a07850" }}>Bulk Order Discount (on total after item discounts)</p>
                 <div className="flex gap-2">
-                  {(["None", "PWD", "Senior"] as const).map((d) => (
+                  {(["None", "5%", "10%"] as const).map((d) => (
                     <button key={d}
-                      onClick={() => {
-                        if (d === "None") {
-                          updateActiveTabDiscount("None", "", "");
-                        } else {
-                          openDiscountModal(d);
-                        }
-                      }}
+                      onClick={() => updateActiveTabBulkDiscount(d)}
                       className="flex-1 py-2 rounded-lg text-sm font-semibold transition-all active:scale-95 touch-manipulation"
-                      style={discount === d
+                      style={bulkDiscount === d
                         ? { background: "#3b2212", color: "white" }
                         : { background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
-                      {d === "None" ? "None" : `${d} (20%)`}
+                      {d === "None" ? "None" : `${d} OFF`}
                     </button>
                   ))}
                 </div>
-                {discount !== "None" && discountCustomerNameTab && (
-                  <div className="mt-2 px-3 py-2 rounded-xl text-xs flex items-center justify-between"
-                    style={{ background: "#f0faf0", border: "1.5px solid #b6e2b6" }}>
-                    <div>
-                      <p className="font-semibold" style={{ color: "#2d7a38" }}>{discountCustomerNameTab}</p>
-                      <p style={{ color: "#5a8a5a" }}>ID: {discountCustomerIDTab}</p>
-                    </div>
-                    <button
-                      onClick={() => {
-                        setPendingDiscount(discount as "PWD" | "Senior");
-                        setDiscountModal(true);
-                        setTempName(discountCustomerNameTab);
-                        setTempID(discountCustomerIDTab);
-                        setActiveInput(null);
-                      }}
-                      className="text-xs underline ml-2 py-2 px-2 rounded-lg active:scale-95 touch-manipulation"
-                      style={{ color: "#2d7a38" }}>
-                      Edit
-                    </button>
-                  </div>
-                )}
               </div>
               <div className="flex justify-between text-sm" style={{ color: "#a07850" }}>
-                <span>Subtotal</span><span>₱{subtotal.toFixed(0)}</span>
+                <span>Subtotal</span><span>₱{subtotal.toFixed(2)}</span>
               </div>
-              {discount !== "None" && (
+              {bulkDiscount !== "None" && (
                 <div className="flex justify-between text-sm" style={{ color: "#2d7a38" }}>
-                  <span>{discount} Discount (20%)</span>
+                  <span>Bulk Discount ({bulkDiscount})</span>
                   <span>− ₱{discountAmount.toFixed(2)}</span>
                 </div>
               )}
@@ -1943,181 +2302,35 @@ export default function POSLayout() {
         </div>
       </div>
 
-      {/* Manage Modal */}
-      <ManageModal
-        isOpen={isManageModalOpen}
-        onClose={() => setIsManageModalOpen(false)}
-        onAddCategory={handleAddCategory}
-        onAddItem={handleAddItem}
-        onDeleteCategory={handleDeleteCategory}
-        onDeleteItem={handleDeleteItem}
-        categories={allCategories}
-        itemsByCategory={allProducts}
-      />
-
-      {/* Discount Modal */}
-      {discountModal && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-50 p-4">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xl" style={{ overflow: "visible" }}>
-            <div className="p-6" style={{ overflow: "visible" }}>
-              <div className="mb-4">
-                <h2 className="text-2xl font-bold" style={{ color: "#3b2212" }}>
-                  {pendingDiscount} Discount
-                </h2>
-                <p className="text-sm" style={{ color: "#a07850" }}>20% off the total bill</p>
-              </div>
-
-              <p className="text-sm mb-4" style={{ color: "#a07850" }}>
-                Tap on an input field to use the keyboard
-              </p>
-
-              <div className="space-y-4 mb-4">
-                <div>
-                  <label className="text-sm font-semibold block mb-1.5" style={{ color: "#3b2212" }}>
-                    Customer Name <span style={{ color: "#c0392b" }}>*</span>
-                  </label>
-                  <div
-                    onClick={() => setActiveInput("name")}
-                    className="w-full rounded-xl px-4 py-3 text-base transition-all cursor-pointer"
-                    style={{
-                      background: "#faf7f4",
-                      border: activeInput === "name" ? "2px solid #3b2212" : "1.5px solid #e8ddd4",
-                      color: "#3b2212",
-                      minHeight: "52px",
-                    }}
-                  >
-                    {tempName || <span style={{ color: "#c0b090" }}>Tap to enter name...</span>}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-sm font-semibold block mb-1.5" style={{ color: "#3b2212" }}>
-                    ID Number <span style={{ color: "#c0392b" }}>*</span>
-                  </label>
-                  <div
-                    onClick={() => setActiveInput("id")}
-                    className="w-full rounded-xl px-4 py-3 text-base transition-all cursor-pointer font-mono"
-                    style={{
-                      background: "#faf7f4",
-                      border: activeInput === "id" ? "2px solid #3b2212" : "1.5px solid #e8ddd4",
-                      color: "#3b2212",
-                      minHeight: "52px",
-                    }}
-                  >
-                    {tempID || <span style={{ color: "#c0b090" }}>Tap to enter ID number...</span>}
-                  </div>
-                </div>
-              </div>
-
-              {activeInput && (
-                <div className="mt-4 pt-4 border-t" style={{ borderColor: "#e8ddd4" }}>
-                  <div className="flex justify-between items-center mb-3">
-                    <p className="text-sm font-semibold" style={{ color: "#3b2212" }}>
-                      Enter {activeInput === "name" ? "Name" : "ID Number"}
-                    </p>
-                  </div>
-                  
-                  {activeInput === "name" ? (
-                    <div className="space-y-2">
-                      <div className="grid grid-cols-10 gap-1.5">
-                        {["Q","W","E","R","T","Y","U","I","O","P"].map((key) => (
-                          <button key={key} onClick={() => handleKeyPress(key)}
-                            className="py-2.5 rounded-lg font-semibold text-base transition-all active:scale-95 touch-manipulation"
-                            style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
-                            {key}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="grid grid-cols-9 gap-1.5">
-                        {["A","S","D","F","G","H","J","K","L"].map((key) => (
-                          <button key={key} onClick={() => handleKeyPress(key)}
-                            className="py-2.5 rounded-lg font-semibold text-base transition-all active:scale-95 touch-manipulation"
-                            style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
-                            {key}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="grid grid-cols-9 gap-1.5">
-                        {["Z","X","C","V","B","N","M"].map((key) => (
-                          <button key={key} onClick={() => handleKeyPress(key)}
-                            className="py-2.5 rounded-lg font-semibold text-base transition-all active:scale-95 touch-manipulation"
-                            style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
-                            {key}
-                          </button>
-                        ))}
-                        <button onClick={() => handleKeyPress("SPACE")}
-                          className="py-2.5 rounded-lg font-semibold text-sm transition-all active:scale-95 touch-manipulation col-span-2"
-                          style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
-                          SPACE
-                        </button>
-                        <button onClick={() => handleKeyPress("BACKSPACE")}
-                          className="py-2.5 rounded-lg font-semibold text-base transition-all active:scale-95 touch-manipulation"
-                          style={{ background: "#fee2e2", color: "#c0392b", border: "1px solid #f5c6c6" }}>
-                          ⌫
-                        </button>
-                        <button onClick={() => handleKeyPress("CLEAR")}
-                          className="py-2.5 rounded-lg font-semibold text-sm transition-all active:scale-95 touch-manipulation"
-                          style={{ background: "#fff0f0", color: "#c0392b", border: "1px solid #f5c6c6" }}>
-                          CLEAR
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div>
-                      <div className="grid grid-cols-3 gap-2 mb-2">
-                        {["1","2","3","4","5","6","7","8","9"].map((num) => (
-                          <button key={num} onClick={() => handleKeyPress(num)}
-                            className="py-4 rounded-xl font-bold text-2xl transition-all active:scale-95 touch-manipulation"
-                            style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
-                            {num}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="grid grid-cols-3 gap-2">
-                        <button onClick={() => handleKeyPress("CLEAR")}
-                          className="py-4 rounded-xl font-bold text-base transition-all active:scale-95 touch-manipulation"
-                          style={{ background: "#fff0f0", color: "#c0392b", border: "1.5px solid #f5c6c6" }}>
-                          CLEAR
-                        </button>
-                        <button onClick={() => handleKeyPress("0")}
-                          className="py-4 rounded-xl font-bold text-2xl transition-all active:scale-95 touch-manipulation"
-                          style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
-                          0
-                        </button>
-                        <button onClick={() => handleKeyPress("BACKSPACE")}
-                          className="py-4 rounded-xl font-bold text-2xl transition-all active:scale-95 touch-manipulation"
-                          style={{ background: "#fee2e2", color: "#c0392b", border: "1.5px solid #f5c6c6" }}>
-                          ⌫
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="flex gap-4 mt-6">
-                <button onClick={cancelDiscount}
-                  className="flex-1 py-4 rounded-2xl font-bold text-lg active:scale-95 touch-manipulation"
-                  style={{ background: "#f0e8e0", color: "#3b2212" }}>
-                  Cancel
-                </button>
-                <button
-                  disabled={!tempName.trim() || !tempID.trim()}
-                  onClick={applyDiscount}
-                  className="flex-1 py-4 rounded-2xl font-bold text-lg transition-all active:scale-95 touch-manipulation"
-                  style={{
-                    background: !tempName.trim() || !tempID.trim() ? "#e8e0d8" : "#2d7a38",
-                    color: !tempName.trim() || !tempID.trim() ? "#b09070" : "white",
-                    cursor: !tempName.trim() || !tempID.trim() ? "not-allowed" : "pointer",
-                  }}>
-                  Apply Discount
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+      {/* Individual Discount Modal */}
+      {discountModalItem && (
+        <IndividualDiscountModal
+          isOpen={true}
+          onClose={() => setDiscountModalItem(null)}
+          onApply={(discountType, name, id) => {
+            updateItemDiscount(discountModalItem.index, discountType, name, id);
+            setDiscountModalItem(null);
+          }}
+          itemName={discountModalItem.item.name}
+          currentDiscount={{
+            type: discountModalItem.item.discountType || "None",
+            name: discountModalItem.item.discountCustomerName || "",
+            id: discountModalItem.item.discountCustomerID || ""
+          }}
+        />
       )}
 
+     <ManageModal
+  isOpen={isManageModalOpen}
+  onClose={() => setIsManageModalOpen(false)}
+  onAddCategory={handleAddCategory}
+  onAddItem={handleAddItem}
+  onDeleteCategory={handleDeleteCategory}
+  onDeleteItem={handleDeleteItem}
+  categories={allCategories}
+  itemsByCategory={allProducts}
+  categoryColors={categoryColors}
+/>
       {/* Confirmation Modal */}
       {confirmModal.open && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-50">
