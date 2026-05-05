@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
+import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 import Link from "next/link";
 
 const navItems = [
@@ -26,6 +28,44 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const router = useRouter();
   const pathname = usePathname();
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [userRole, setUserRole] = useState<string>("");
+  const [userName, setUserName] = useState<string>("");
+
+  // Fetch the logged-in user's role and name from Firestore
+  useEffect(() => {
+    const fetchUserInfo = async () => {
+      if (!user?.uid) {
+        setUserRole("");
+        setUserName("");
+        return;
+      }
+      try {
+        const byIdSnap = await getDoc(doc(db, "users", user.uid));
+        if (byIdSnap.exists()) {
+          const data = byIdSnap.data();
+          setUserRole(data.role || "");
+          setUserName(data.fullname || data.username || user.displayName || "User");
+          return;
+        }
+        const q = query(collection(db, "users"), where("uid", "==", user.uid));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const data = snap.docs[0].data();
+          setUserRole(data.role || "");
+          setUserName(data.fullname || data.username || user.displayName || "User");
+        }
+      } catch (err) {
+        console.error("Error fetching user info:", err);
+      }
+    };
+    fetchUserInfo();
+  }, [user]);
+
+  // Capitalize role for display (e.g., "admin" -> "Admin")
+  const displayRole = userRole
+    ? userRole.charAt(0).toUpperCase() + userRole.slice(1).toLowerCase()
+    : "Cashier";
+  const displayName = userName || user?.displayName || "User";
 
   useEffect(() => {
     if (!loading && !user) router.push("/");
@@ -67,14 +107,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm"
             style={{ background: "#f7f3ef", color: "#3b2212" }}
           >
-            {(user?.displayName || "U")[0].toUpperCase()}
+            {(displayName || "U")[0].toUpperCase()}
           </div>
           <div>
             <p className="text-white font-medium text-sm">
-              {user?.displayName || "User"}
+              {displayName}
             </p>
             <p className="text-xs" style={{ color: "#d4a97a" }}>
-              Cashier
+              {displayRole}
             </p>
           </div>
         </div>

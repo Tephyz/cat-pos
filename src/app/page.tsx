@@ -1,4 +1,4 @@
-"use client";
+      "use client";
 
 import Image from "next/image";
 import { useState, useEffect } from "react";
@@ -8,7 +8,7 @@ import { useAuth } from "@/context/AuthContext";
 
 export default function SigninPage() {
   const [form, setForm] = useState({
-    email: "",
+    identifier: "",
     password: "",
   });
 
@@ -26,14 +26,14 @@ export default function SigninPage() {
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
-    setForm({ ...form, [name]: value });
+    setForm(prev => ({ ...prev, [name]: value }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!form.email || !form.password) {
-      setError("Please enter your email and password.");
+    if (!form.identifier || !form.password) {
+      setError("Please enter your username or email and password.");
       return;
     }
 
@@ -41,7 +41,7 @@ export default function SigninPage() {
     setLoading(true);
 
     try {
-      await signIn(form.email, form.password);
+      await signIn(form.identifier, form.password);
       router.push("/dashboard");
     } catch (err: any) {
       setError(err.message || "Failed to sign in");
@@ -74,10 +74,10 @@ export default function SigninPage() {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <input
-              type="email"
-              name="email"
-              placeholder="Email"
-              value={form.email}
+              type="text"
+              name="identifier"
+              placeholder="Username or Email"
+              value={form.identifier || ''}
               onChange={handleChange}
               className="w-full border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-black"
               required
@@ -87,7 +87,7 @@ export default function SigninPage() {
               type="password"
               name="password"
               placeholder="Password"
-              value={form.password}
+              value={form.password || ''}
               onChange={handleChange}
               className="w-full border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-black"
               required

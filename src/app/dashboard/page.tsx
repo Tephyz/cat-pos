@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
-import { collection, addDoc, serverTimestamp, runTransaction, doc, increment, query, where, getDocs, onSnapshot, DocumentReference } from "firebase/firestore";
+import { collection, addDoc, serverTimestamp, runTransaction, doc, increment, query, where, getDoc, getDocs, onSnapshot, DocumentReference, updateDoc, deleteDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
 interface OrderItem {
@@ -904,6 +904,185 @@ function IndividualDiscountModal({
     router.push("/");
   };
 
+  // Load menu from Firestore (seed with hardcoded items if collections are empty)
+  // Wait for authenticated user so Firestore rules pass
+  useEffect(() => {
+    if (!user?.uid) {
+      console.log("Menu load: waiting for authenticated user...");
+      return;
+    }
+    const seedAndLoad = async () => {
+      try {
+        const hardcodedProducts: Record<string, string[]> = {
+          Coffee: ["Americano", "Cappuccino", "Hazelnut", "Caramel Macchiato", "Mocha", "Spanish Latte", "Salted Caramel Latte", "Dirty Matcha", "Vanilla Latte"],
+          "Non Coffee": ["Choco", "Dark Choco", "Matcha latte", "Salted Caramel", "Caramel"],
+          Milktea: ["Wintermelon", "Okinawa", "Dark Choco", "Capuccino"],
+          "Yakult Mix": ["Wintermelon", "Blueberry", "Green Apple", "Lychee", "Strawberry"],
+          "Fruit Tea": ["Wintermelon", "Blueberry", "Green Apple", "Lychee", "Strawberry"],
+          "Hot Tea": ["English Breakfast", "Four Red Fruits", "Pure Camomile", "Green Tea & Lemon", "Lemon & Ginger"],
+        };
+
+        console.log("Menu load: fetching categories + menu_items as uid=", user.uid);
+
+        // Fetch independently so one failure doesn't kill the other
+        let categoriesSnap;
+        let itemsSnap;
+        try {
+          categoriesSnap = await getDocs(collection(db, "categories"));
+        } catch (e) {
+          console.error("Failed to read categories:", e);
+          return;
+        }
+        try {
+          itemsSnap = await getDocs(collection(db, "menu_items"));
+        } catch (e) {
+          console.error("Failed to read menu_items:", e);
+          return;
+        }
+
+        console.log(
+          `Menu load: categories=${categoriesSnap.size}, menu_items=${itemsSnap.size}`
+        );
+
+        // Seed if both empty
+        if (categoriesSnap.empty && itemsSnap.empty) {
+          console.log("Seeding menu collections...");
+          const seedCategories = [
+            { name: "Coffee", color: "#C0392B" },
+            { name: "Non Coffee", color: "#2980B9" },
+            { name: "Milktea", color: "#F39C12" },
+            { name: "Yakult Mix", color: "#43A047" },
+            { name: "Fruit Tea", color: "#E91E63" },
+            { name: "Hot Tea", color: "#5E35B1" },
+            { name: "Frappe", color: "#7B4A2B" },
+            { name: "Food & Bites", color: "#8D6E63" },
+          ];
+          for (const c of seedCategories) {
+            await addDoc(collection(db, "categories"), {
+              name: c.name,
+              color: c.color,
+              items: hardcodedProducts[c.name] || [],
+              isDefault: true,
+              createdAt: serverTimestamp(),
+            });
+          }
+          console.log("Seeding done.");
+          // Re-load after seeding
+          const reCats = await getDocs(collection(db, "categories"));
+          reCats.forEach((d) => {
+            const data = d.data();
+            if (data.name && data.color) {
+              categoryColors[data.name] = {
+                bg: `${data.color}20`,
+                hoverBg: `${data.color}30`,
+                activeBg: data.color,
+                text: data.color,
+              };
+            }
+          });
+          return;
+        }
+
+        // First pass: collect all menu_items names per category (for orphan detection)
+        const menuItemsByCategory: Record<string, Set<string>> = {};
+        const loadedPrices: Record<string, { M: number; L: number }> = {};
+        const loadedItemColors: Record<string, { bg: string; hoverBg?: string; activeBg: string; text: string }> = {};
+        itemsSnap.forEach((d) => {
+          const data = d.data();
+          if (!data.name || data.price == null) return;
+          loadedPrices[data.name] = { M: data.price, L: data.price + 20 };
+          if (data.categoryColor) {
+            loadedItemColors[data.name] = {
+              bg: `${data.categoryColor}20`,
+              activeBg: data.categoryColor,
+              text: data.categoryColor,
+            };
+          }
+          if (data.category) {
+            if (!menuItemsByCategory[data.category]) menuItemsByCategory[data.category] = new Set();
+            menuItemsByCategory[data.category].add(data.name);
+          }
+        });
+
+        // Second pass: load categories, filter out orphan items, and self-heal DB
+        const loadedDynamicProducts: Record<string, string[]> = {};
+        const cleanupPromises: Promise<void>[] = [];
+        categoriesSnap.forEach((d) => {
+          const data = d.data();
+          if (!data.name) return;
+
+          // Override too-light/unreadable colors (e.g., the old Frappe #D0D0D0 seed)
+          let displayColor = data.color;
+          const colorOverrides: Record<string, string> = {
+            Frappe: "#7B4A2B",
+          };
+          if (colorOverrides[data.name] && (!displayColor || displayColor.toUpperCase() === "#D0D0D0")) {
+            displayColor = colorOverrides[data.name];
+            // Persist the corrected color back to DB
+            cleanupPromises.push(
+              updateDoc(d.ref, { color: displayColor }).catch((err) =>
+                console.warn(`Could not update color for "${data.name}":`, err.message)
+              )
+            );
+          }
+
+          if (displayColor) {
+            categoryColors[data.name] = {
+              bg: `${displayColor}20`,
+              hoverBg: `${displayColor}30`,
+              activeBg: displayColor,
+              text: displayColor,
+            };
+          }
+
+          const rawItems: string[] = data.items || [];
+          const defaults = hardcodedProducts[data.name] || [];
+          const customItems = menuItemsByCategory[data.name] || new Set<string>();
+
+          // Defaults: must be in category.items array (so they can be removed if user wants)
+          const visibleDefaults = rawItems.filter((name: string) => defaults.includes(name));
+
+          // Custom items: read directly from menu_items collection (source of truth)
+          // This way: deleting from menu_items removes it; adding to menu_items adds it.
+          const visibleCustom = Array.from(customItems);
+
+          const validItems = [...visibleDefaults, ...visibleCustom];
+          loadedDynamicProducts[data.name] = validItems;
+
+          // Self-heal: sync category.items array to match (best-effort)
+          const expectedItems = [...visibleDefaults, ...visibleCustom];
+          const arraysDiffer =
+            expectedItems.length !== rawItems.length ||
+            expectedItems.some((n) => !rawItems.includes(n));
+          if (arraysDiffer) {
+            console.log(`Syncing "${data.name}" items array in DB`);
+            cleanupPromises.push(
+              updateDoc(d.ref, { items: expectedItems }).catch((err) =>
+                console.warn(`Could not auto-sync "${data.name}" (likely insufficient permissions):`, err.message)
+              )
+            );
+          }
+        });
+
+        // Fire cleanups (don't block UI)
+        if (cleanupPromises.length) {
+          Promise.all(cleanupPromises).then(() =>
+            console.log("Orphan cleanup completed")
+          );
+        }
+
+        setDynamicProducts(loadedDynamicProducts);
+        setDynamicPrices(loadedPrices);
+        setDynamicItemColors(loadedItemColors);
+        console.log(`Loaded ${categoriesSnap.size} categories and ${itemsSnap.size} items from DB`);
+      } catch (err) {
+        console.error("Error loading menu from DB (using hardcoded fallback):", err);
+      }
+    };
+    seedAndLoad();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid]);
+
   const [currentTime, setCurrentTime] = useState(new Date());
   useEffect(() => {
     const interval = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -943,6 +1122,36 @@ function IndividualDiscountModal({
   const [gcashRefModal, setGcashRefModal] = useState(false);
   const [isManageModalOpen, setIsManageModalOpen] = useState(false);
   const [discountModalItem, setDiscountModalItem] = useState<{ index: number; item: OrderItem } | null>(null);
+  const [userRole, setUserRole] = useState<string>("");
+
+  // Fetch the logged-in user's role from Firestore users collection
+  useEffect(() => {
+    const fetchRole = async () => {
+      if (!user?.uid) {
+        setUserRole("");
+        return;
+      }
+      try {
+        // Primary: lookup by doc ID
+        const byIdSnap = await getDoc(doc(db, "users", user.uid));
+        if (byIdSnap.exists()) {
+          setUserRole(byIdSnap.data().role || "");
+          return;
+        }
+        // Fallback: query by uid field
+        const userQuery = query(collection(db, "users"), where("uid", "==", user.uid));
+        const snap = await getDocs(userQuery);
+        if (!snap.empty) {
+          setUserRole(snap.docs[0].data().role || "");
+        }
+      } catch (err) {
+        console.error("Error fetching user role:", err);
+      }
+    };
+    fetchRole();
+  }, [user]);
+
+  const canManageMenu = ["admin", "Admin", "manager", "Manager"].includes(userRole);
 
   const [dynamicProducts, setDynamicProducts] = useState<Record<string, string[]>>({});
   const [dynamicPrices, setDynamicPrices] = useState<Record<string, { M: number; L: number }>>({});
@@ -1094,15 +1303,8 @@ function IndividualDiscountModal({
     "Food & Bites": [],
   };
 
-  const allProducts: Record<string, string[]> = { ...products };
-  
-  Object.keys(dynamicProducts).forEach(cat => {
-    if (allProducts[cat]) {
-      allProducts[cat] = [...allProducts[cat], ...dynamicProducts[cat]];
-    } else {
-      allProducts[cat] = dynamicProducts[cat];
-    }
-  });
+  // Source of truth: DB-loaded dynamicProducts only (no hardcoded fallback)
+  const allProducts: Record<string, string[]> = { ...dynamicProducts };
   
   const frappeProducts = {
     "Coffee Based": ["Java Chip", "Coffee Jelly", "Dark Mocha", "Caramel"],
@@ -1229,56 +1431,104 @@ function IndividualDiscountModal({
 
   const ADD_ON_PRICE = 30;
 
-  const handleAddCategory = (categoryName: string, color: string) => {
-  setDynamicProducts(prev => ({
-    ...prev,
-    [categoryName]: []
-  }));
-  
-  // Create a lighter version for bg (20% opacity)
-  const bgColor = `${color}20`;
-  const hoverBgColor = `${color}30`;
-  
-  categoryColors[categoryName] = { 
-    bg: bgColor, 
-    hoverBg: hoverBgColor, 
-    activeBg: color, 
-    text: color 
-  };
-};
-
-const handleAddItem = (item: { name: string; price: number; category: string }) => {
-  setDynamicProducts(prev => ({
-    ...prev,
-    [item.category]: [...(prev[item.category] || []), item.name]
-  }));
-  
-  setDynamicPrices(prev => ({
-    ...prev,
-    [item.name]: { M: item.price, L: item.price + 20 }
-  }));
-  
-  // Get the category's color
-  const categoryColor = categoryColors[item.category]?.activeBg || "#3b2212";
-  
-  setDynamicItemColors(prev => ({
-    ...prev,
-    [item.name]: { 
-      bg: `${categoryColor}20`, 
-      activeBg: categoryColor,
-      text: categoryColor 
+  const handleAddCategory = async (categoryName: string, color: string) => {
+    try {
+      await addDoc(collection(db, "categories"), {
+        name: categoryName,
+        color: color,
+        items: [],
+        isDefault: false,
+        createdAt: serverTimestamp(),
+      });
+    } catch (err) {
+      console.error("Error saving category to DB:", err);
     }
-  }));
-};
 
-  const handleDeleteCategory = (categoryName: string) => {
+    setDynamicProducts(prev => ({
+      ...prev,
+      [categoryName]: []
+    }));
+
+    categoryColors[categoryName] = {
+      bg: `${color}20`,
+      hoverBg: `${color}30`,
+      activeBg: color,
+      text: color,
+    };
+  };
+
+  const handleAddItem = async (item: { name: string; price: number; category: string }) => {
+    const categoryColor = categoryColors[item.category]?.activeBg || "#3b2212";
+
+    try {
+      await addDoc(collection(db, "menu_items"), {
+        name: item.name,
+        price: item.price,
+        category: item.category,
+        categoryColor: categoryColor,
+        isCustom: true,
+        createdAt: serverTimestamp(),
+      });
+
+      // Update the category doc's items array if it exists
+      const catQuery = query(collection(db, "categories"), where("name", "==", item.category));
+      const catSnap = await getDocs(catQuery);
+      if (!catSnap.empty) {
+        const catDoc = catSnap.docs[0];
+        const currentItems = catDoc.data().items || [];
+        if (!currentItems.includes(item.name)) {
+          await updateDoc(catDoc.ref, { items: [...currentItems, item.name] });
+        }
+      }
+    } catch (err) {
+      console.error("Error saving item to DB:", err);
+    }
+
+    setDynamicProducts(prev => ({
+      ...prev,
+      [item.category]: [...(prev[item.category] || []), item.name],
+    }));
+
+    setDynamicPrices(prev => ({
+      ...prev,
+      [item.name]: { M: item.price, L: item.price + 20 },
+    }));
+
+    setDynamicItemColors(prev => ({
+      ...prev,
+      [item.name]: {
+        bg: `${categoryColor}20`,
+        activeBg: categoryColor,
+        text: categoryColor,
+      },
+    }));
+  };
+
+  const handleDeleteCategory = async (categoryName: string) => {
     const defaultCategories = ["Coffee", "Non Coffee", "Milktea", "Yakult Mix", "Fruit Tea", "Hot Tea", "Frappe", "Food & Bites"];
     if (defaultCategories.includes(categoryName)) {
       alert("Cannot delete default categories!");
       return;
     }
-    
+
     const itemsToRemove = [...(dynamicProducts[categoryName] || [])];
+
+    try {
+      // Delete category doc
+      const catQuery = query(collection(db, "categories"), where("name", "==", categoryName));
+      const catSnap = await getDocs(catQuery);
+      for (const d of catSnap.docs) {
+        await deleteDoc(d.ref);
+      }
+      // Delete all items under this category
+      const itemsQuery = query(collection(db, "menu_items"), where("category", "==", categoryName));
+      const itemsSnap = await getDocs(itemsQuery);
+      for (const d of itemsSnap.docs) {
+        await deleteDoc(d.ref);
+      }
+    } catch (err) {
+      console.error("Error deleting category from DB:", err);
+    }
     
     setDynamicProducts(prev => {
       const newProducts = { ...prev };
@@ -1303,7 +1553,7 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
     });
   };
 
-  const handleDeleteItem = (categoryName: string, itemName: string) => {
+  const handleDeleteItem = async (categoryName: string, itemName: string) => {
     const defaultItems = [
       "Americano", "Cappuccino", "Hazelnut", "Caramel Macchiato", "Mocha", "Spanish Latte", "Salted Caramel Latte", "Dirty Matcha", "Vanilla Latte",
       "Choco", "Dark Choco", "Matcha latte", "Salted Caramel", "Caramel",
@@ -1313,12 +1563,37 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
       "Cheesecake", "Empanada", "Muffin", "Cookies", "Popcorn", "Pancake (Dessert)",
       "Tapa", "Bangus", "Spam", "Hotdog", "Ham", "Longganisa", "Spaghetti", "Tuna Pesto", "Vegetable Salad"
     ];
-    
+
     if (defaultItems.includes(itemName)) {
       alert("Cannot delete default items!");
       return;
     }
-    
+
+    try {
+      // Delete the item doc
+      const itemQuery = query(
+        collection(db, "menu_items"),
+        where("name", "==", itemName),
+        where("category", "==", categoryName)
+      );
+      const itemSnap = await getDocs(itemQuery);
+      for (const d of itemSnap.docs) {
+        await deleteDoc(d.ref);
+      }
+      // Update the category's items array
+      const catQuery = query(collection(db, "categories"), where("name", "==", categoryName));
+      const catSnap = await getDocs(catQuery);
+      if (!catSnap.empty) {
+        const catDoc = catSnap.docs[0];
+        const currentItems = catDoc.data().items || [];
+        await updateDoc(catDoc.ref, {
+          items: currentItems.filter((i: string) => i !== itemName),
+        });
+      }
+    } catch (err) {
+      console.error("Error deleting item from DB:", err);
+    }
+
     setDynamicProducts(prev => ({
       ...prev,
       [categoryName]: prev[categoryName]?.filter(item => item !== itemName) || []
@@ -1904,20 +2179,22 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
               </button>
             </div>
             
-            {/* Manage Menu Button */}
-            <button
-              onClick={() => setIsManageModalOpen(true)}
-              className="shrink-0 ml-3 px-4 py-2 rounded-lg text-sm font-medium transition-all hover:bg-[#e8e0d8] border border-[#e8ddd4] bg-white whitespace-nowrap flex items-center gap-2"
-              style={{ color: "#5a3d28" }}
-              title="Manage Categories & Items"
-            >
-              <img 
-                src="/settings.png" 
-                alt="Menu Icon" 
-                className="w-5 h-5"
-              />
-              Manage Menu
-            </button>
+            {/* Manage Menu Button — Admin/Manager only */}
+            {canManageMenu && (
+              <button
+                onClick={() => setIsManageModalOpen(true)}
+                className="shrink-0 ml-3 px-4 py-2 rounded-lg text-sm font-medium transition-all hover:bg-[#e8e0d8] border border-[#e8ddd4] bg-white whitespace-nowrap flex items-center gap-2"
+                style={{ color: "#5a3d28" }}
+                title="Manage Categories & Items"
+              >
+                <img 
+                  src="/settings.png" 
+                  alt="Menu Icon" 
+                  className="w-5 h-5"
+                />
+                Manage Menu
+              </button>
+            )}
           </div>
         </div>
 
@@ -2320,17 +2597,19 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
         />
       )}
 
-     <ManageModal
-  isOpen={isManageModalOpen}
-  onClose={() => setIsManageModalOpen(false)}
-  onAddCategory={handleAddCategory}
-  onAddItem={handleAddItem}
-  onDeleteCategory={handleDeleteCategory}
-  onDeleteItem={handleDeleteItem}
-  categories={allCategories}
-  itemsByCategory={allProducts}
-  categoryColors={categoryColors}
-/>
+      {canManageMenu && (
+        <ManageModal
+          isOpen={isManageModalOpen}
+          onClose={() => setIsManageModalOpen(false)}
+          onAddCategory={handleAddCategory}
+          onAddItem={handleAddItem}
+          onDeleteCategory={handleDeleteCategory}
+          onDeleteItem={handleDeleteItem}
+          categories={allCategories}
+          itemsByCategory={allProducts}
+          categoryColors={categoryColors}
+        />
+      )}
       {/* Confirmation Modal */}
       {confirmModal.open && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-50">
