@@ -27,7 +27,46 @@ interface OrderRecord {
   cashierName: string;
   status?: string; 
   items: OrderItem[];
+  discount?: {
+    type: string; // "PWD", "Senior", "Bulk 5%", "Bulk 10%", etc.
+    amount: number;
+    percentage?: number;
+    id?: string;
+  };
+  subtotal?: number;
 }
+
+// Price configuration for add-ons (for display calculations)
+const ADD_ON_PRICES: Record<string, number> = {
+  Pearl: 15,
+  Nata: 15,
+  Espresso: 20,
+  "Coffee Jelly": 15,
+  Oreo: 20,
+  Caramel: 10,
+  "Whip Cream": 10
+};
+
+// Helper function to calculate item total with add-ons
+const calculateItemBreakdown = (item: OrderItem) => {
+  // Calculate add-ons total
+  const addOnsTotal = (item.addOns || []).reduce((total, addon) => {
+    return total + (ADD_ON_PRICES[addon] || 0);
+  }, 0);
+  
+  // Item total = (base price + add-ons) * quantity
+  const itemTotal = (item.price + addOnsTotal) * item.quantity;
+  
+  return {
+    basePrice: item.price,
+    addOnsTotal,
+    itemTotal,
+    addOnsBreakdown: (item.addOns || []).map(addon => ({
+      name: addon,
+      price: ADD_ON_PRICES[addon] || 0
+    }))
+  };
+};
 
 export default function RefundedOrdersPage() {
   const { user, loading } = useAuth();
@@ -67,15 +106,11 @@ export default function RefundedOrdersPage() {
     }
   }, [user, loading, router]);
 
-  // ---------------------------------------------------------
-  // FILTERING LOGIC (Search Bar + Date Dropdown)
-  // ---------------------------------------------------------
+  // FILTERING LOGIC
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  
   const startOfWeek = new Date(startOfToday);
   startOfWeek.setDate(now.getDate() - now.getDay()); 
-  
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
   const filteredOrders = refundedOrders.filter(o => {
@@ -120,7 +155,7 @@ export default function RefundedOrdersPage() {
               type="text" 
               value={searchQuery} 
               onChange={(e)=>setSearchQuery(e.target.value)} 
-              placeholder="Search ID or Cashier..." 
+              placeholder="Search ID or Barista..." 
               className="w-full bg-white border-[1.5px] border-[#e8ddd4] p-3 pl-11 text-base text-[#3b2212] focus:outline-none focus:border-[#c0392b] rounded-xl shadow-sm transition-all" 
             />
             {searchQuery && (
@@ -143,7 +178,7 @@ export default function RefundedOrdersPage() {
         </div>
       </div>
 
-      {/* Orders Grid - 4 columns layout */}
+      {/* Orders Grid - 3 columns per row */}
       <div className="flex-1 overflow-y-auto pr-2 pb-10">
         {filteredOrders.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 bg-white rounded-3xl border-[1.5px] border-[#e8ddd4]">
@@ -153,84 +188,168 @@ export default function RefundedOrdersPage() {
             <p className="text-[#a07850] text-lg font-medium">No refunded orders yet.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-            {filteredOrders.map((order) => (
-              <div key={order.id} className="bg-white rounded-2xl p-5 shadow-sm border-[1.5px] border-[#e8ddd4] hover:shadow-md hover:border-[#f5c6c6] transition-all flex flex-col h-full">
-                
-                {/* Order Header */}
-                <div className="mb-4 pb-3 border-b border-[#e8ddd4]">
-                  <h3 className="text-lg font-bold text-[#c0392b] line-through decoration-2 decoration-[#f5c6c6] truncate">#{order.transactionNumber}</h3>
-                  <p className="text-sm text-[#a07850] mt-1.5">
-                    {order.createdAt ? new Date(order.createdAt.toDate()).toLocaleString() : "Unknown Date"}
-                  </p>
-                </div>
-                
-                {/* Order Total */}
-                <div className="mb-4">
-                  <p className="text-2xl font-bold text-[#c0392b]">₱{order.totalAmount.toFixed(2)}</p>
-                </div>
-                
-                {/* Order Meta Info */}
-                <div className="flex gap-2 items-center mb-3 flex-wrap">
-                  <span className={`text-sm px-2.5 py-1 rounded-md font-bold uppercase tracking-wider ${
-                    order.paymentMethod === 'Cash' ? 'bg-[#3b2212] text-white' : 'bg-[#0070ba] text-white'
-                  }`}>
-                    {order.paymentMethod}
-                  </span>
-                  <span className="text-sm text-[#a07850] bg-[#faf7f4] px-2.5 py-1 rounded-md border border-[#e8ddd4] font-medium">
-                    {order.items?.length || 0} item(s)
-                  </span>
-                </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+            {filteredOrders.map((order) => {
+              const orderSubtotal = order.subtotal || order.items.reduce((sum, item) => {
+                const breakdown = calculateItemBreakdown(item);
+                return sum + breakdown.itemTotal;
+              }, 0);
+              
+              const discountAmount = order.discount?.amount || 0;
+              const discountType = order.discount?.type || "None";
+              const discountPercentage = order.discount?.percentage;
+              
+              return (
+                <div key={order.id} className="bg-white rounded-2xl shadow-sm border-[1.5px] border-[#e8ddd4] hover:shadow-md hover:border-[#f5c6c6] transition-all overflow-hidden flex flex-col h-full">
+                  
+                  {/* Order Header */}
+                  <div className="p-4 bg-gradient-to-r from-[#faf7f4] to-white border-b border-[#e8ddd4]">
+                    <div className="flex justify-between items-start mb-2">
+                      <div>
+                        <h3 className="text-lg font-bold text-[#c0392b] line-through decoration-2 decoration-[#f5c6c6]">#{order.transactionNumber}</h3>
+                        <p className="text-xs text-[#a07850] mt-1">
+                          {order.createdAt ? new Date(order.createdAt.toDate()).toLocaleString() : "Unknown Date"}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xl font-bold text-[#c0392b]">₱{order.totalAmount.toFixed(2)}</p>
+                        <p className="text-xs text-[#a07850]">Total Refunded</p>
+                      </div>
+                    </div>
+                    
+                    <div className="flex gap-2 items-center flex-wrap mt-2">
+                      <span className={`text-xs px-2 py-0.5 rounded-md font-bold uppercase tracking-wider ${
+                        order.paymentMethod === 'Cash' ? 'bg-[#3b2212] text-white' : 'bg-[#0070ba] text-white'
+                      }`}>
+                        {order.paymentMethod}
+                      </span>
+                      <span className="text-xs text-[#a07850] bg-[#faf7f4] px-2 py-0.5 rounded-md border border-[#e8ddd4] font-medium">
+                        {order.items?.length || 0} item(s)
+                      </span>
+                      <span className="text-xs text-[#6b4c30] bg-[#faf7f4] px-2 py-0.5 rounded-md border border-[#e8ddd4] font-medium truncate">
+                        Barista: {order.cashierName || 'Unknown'}
+                      </span>
+                    </div>
+                  </div>
 
-                {/* Cashier Name */}
-                <p className="text-sm text-[#6b4c30] mb-4 font-medium">
-                  Cashier: {order.cashierName || 'Unknown'}
-                </p>
+                  {/* Detailed Price Breakdown - Always Visible */}
+                  <div className="p-4 space-y-3 flex-1 overflow-y-auto max-h-[500px]">
+                    {/* Items List with Detailed Pricing */}
+                    <div>
+                      <h4 className="font-bold text-[#3b2212] mb-2 text-sm border-b border-[#e8ddd4] pb-1">Items Breakdown</h4>
+                      <div className="space-y-2">
+                        {order.items.map((item, idx) => {
+                          const breakdown = calculateItemBreakdown(item);
+                          return (
+                            <div key={idx} className="bg-[#faf7f4] p-2 rounded-lg text-sm">
+                              <div className="flex justify-between items-start">
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-1 flex-wrap mb-1">
+                                    <span className="font-bold text-[#a07850]">{item.quantity}x</span>
+                                    <span className="font-semibold text-[#3b2212]">{item.name}</span>
+                                    {item.size && (
+                                      <span className="text-xs text-[#6b4c30] font-medium bg-white px-1.5 py-0.5 rounded">
+                                        {item.size}
+                                      </span>
+                                    )}
+                                  </div>
+                                  
+                                  {/* Price Breakdown - Compact */}
+                                  <div className="mt-1 ml-4 space-y-0.5 text-xs">
+                                    <div className="flex justify-between text-[#6b4c30]">
+                                      <span>Base price:</span>
+                                      <span>₱{item.price.toFixed(2)}</span>
+                                    </div>
+                                    
+                                    {/* Add-ons with individual prices */}
+                                    {item.addOns && item.addOns.length > 0 && (
+                                      <>
+                                        <div className="text-[#2d7a38] font-medium mt-0.5">Add-ons:</div>
+                                        {breakdown.addOnsBreakdown.map((addon, addonIdx) => (
+                                          <div key={addonIdx} className="flex justify-between text-[#2d7a38] ml-3">
+                                            <span>• {addon.name}</span>
+                                            <span>₱{addon.price.toFixed(2)}</span>
+                                          </div>
+                                        ))}
+                                        <div className="flex justify-between text-[#2d7a38] font-medium border-t border-[#e8ddd4] mt-0.5 pt-0.5">
+                                          <span>Add-ons total:</span>
+                                          <span>₱{breakdown.addOnsTotal.toFixed(2)}</span>
+                                        </div>
+                                      </>
+                                    )}
+                                    
+                                    <div className="flex justify-between font-bold text-[#c0392b] border-t border-[#d4c5b8] mt-1 pt-1">
+                                      <span>Item total:</span>
+                                      <span>₱{breakdown.itemTotal.toFixed(2)}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
 
-                {/* Order Items List */}
-                <div className="flex-1 mb-4">
-                  <div className="space-y-2 max-h-40 overflow-y-auto">
-                    {order.items?.slice(0, 4).map((item, idx) => (
-                      <div key={idx} className="text-sm opacity-75">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex-1">
-                            <span className="font-bold text-[#a07850] text-base">{item.quantity}x</span>{' '}
-                            <span className="font-semibold text-[#3b2212] text-base">{item.name}</span>
-                            {item.size && (
-                              <span className="text-xs text-[#6b4c30] ml-1 font-medium">
-                                ({item.size})
-                              </span>
-                            )}
-                          </div>
-                          <span className="font-semibold text-[#6b4c30] whitespace-nowrap text-base">
-                            ₱{(item.price * item.quantity).toFixed(0)}
-                          </span>
+                    {/* Order Summary */}
+                    <div className="bg-gradient-to-r from-[#f0e8e0] to-[#faf7f4] p-3 rounded-lg">
+                      <h4 className="font-bold text-[#3b2212] mb-2 text-sm">Summary</h4>
+                      <div className="space-y-1 text-sm">
+                        {order.items.map((item, idx) => {
+                          const breakdown = calculateItemBreakdown(item);
+                          return (
+                            <div key={idx} className="flex justify-between text-xs text-[#6b4c30]">
+                              <span className="truncate">{item.quantity}x {item.name}{item.size ? ` (${item.size})` : ''}</span>
+                              <span>₱{breakdown.itemTotal.toFixed(2)}</span>
+                            </div>
+                          );
+                        })}
+                        
+                        <div className="border-t border-[#d4c5b8] my-1"></div>
+                        
+                        <div className="flex justify-between font-semibold text-[#3b2212]">
+                          <span>Subtotal:</span>
+                          <span>₱{orderSubtotal.toFixed(2)}</span>
                         </div>
-                        {item.addOns && item.addOns.length > 0 && (
-                          <div className="ml-5 mt-1">
-                            <span className="text-xs text-[#2d7a38] font-medium">
-                              + {item.addOns.slice(0, 2).join(', ')}{item.addOns.length > 2 ? '...' : ''}
-                            </span>
+                        
+                        {/* Discount Section - Replaces Tax/VAT */}
+                        {discountAmount > 0 ? (
+                          <>
+                            <div className="flex justify-between text-xs text-[#c0392b]">
+                              <span>Discount ({discountType}):</span>
+                              <span>- ₱{discountAmount.toFixed(2)}</span>
+                            </div>
+                            {discountPercentage && (
+                              <div className="flex justify-between text-xs text-[#a07850]">
+                                <span className="ml-4">({discountPercentage}% off)</span>
+                                <span></span>
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <div className="flex justify-between text-xs text-[#a07850]">
+                            <span>Discount:</span>
+                            <span>₱0.00</span>
                           </div>
                         )}
+                        
+                        <div className="flex justify-between font-bold text-base text-[#c0392b] border-t-2 border-[#d4c5b8] pt-1 mt-1">
+                          <span>TOTAL REFUNDED:</span>
+                          <span>₱{order.totalAmount.toFixed(2)}</span>
+                        </div>
                       </div>
-                    ))}
-                    {order.items && order.items.length > 4 && (
-                      <p className="text-sm text-[#a07850] text-center pt-1 font-medium">
-                        +{order.items.length - 4} more item(s)
-                      </p>
-                    )}
+                    </div>
+                  </div>
+
+                  {/* Refund Status Badge */}
+                  <div className="p-4 pt-0 mt-auto">
+                    <span className="block text-center text-xs font-bold bg-[#fff0f0] text-[#c0392b] border border-[#f5c6c6] px-3 py-1.5 rounded-lg uppercase tracking-wide">
+                      Refunded
+                    </span>
                   </div>
                 </div>
-
-                {/* Refund Status Badge */}
-                <div className="mt-auto pt-4 border-t border-[#e8ddd4]">
-                  <span className="block text-center text-sm font-bold bg-[#fff0f0] text-[#c0392b] border border-[#f5c6c6] px-3 py-2 rounded-lg uppercase tracking-wide">
-                    Refunded
-                  </span>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

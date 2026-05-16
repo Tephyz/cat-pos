@@ -6,6 +6,190 @@ import { useAuth } from "@/context/AuthContext";
 import { collection, addDoc, serverTimestamp, runTransaction, doc, increment, query, where, getDocs, onSnapshot, DocumentReference } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
+// Utility function for generating IDs (tablet compatible)
+const generateId = () => {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return 'id-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
+};
+
+// Sort helper function - More robust version
+const sortAlphabetically = (arr) => {
+  return [...arr].sort((a, b) => {
+    // Convert both to strings and handle null/undefined
+    const strA = String(a || '');
+    const strB = String(b || '');
+    return strA.localeCompare(strB, 'en', { sensitivity: 'base' });
+  });
+};
+
+// Helper function to generate receipt HTML with complete order list
+const getReceiptHTML = (transaction: {
+  number: string;
+  method: string;
+  total: number;
+  discountAmount: number;
+  amountTendered: string;
+  nonCashSenderName?: string;
+  nonCashNumber?: string;
+  items?: OrderItem[];
+  subtotal?: number;
+  discount?: {
+    type: string;
+    amount: number;
+    percentage?: number;
+  };
+} | null) => {
+  if (!transaction) return '';
+  
+  const now = new Date();
+  const dateTime = now.toLocaleString();
+  
+  // Add-on price constant
+  const ADD_ON_PRICE_VALUE = 30;
+  
+  const hasItems = transaction.items && transaction.items.length > 0;
+  const subtotal = transaction.subtotal || (hasItems ? transaction.items!.reduce((sum, item) => {
+    const addOnsTotal = (item.addOns || []).reduce((total) => total + ADD_ON_PRICE_VALUE, 0);
+    return sum + (item.price + addOnsTotal) * item.quantity;
+  }, 0) : transaction.total);
+  const discountAmount = transaction.discountAmount || 0;
+  const totalPaid = transaction.total;
+  
+  return `
+    <div style="font-family: monospace; max-width: 350px; margin: 0 auto; padding: 20px;">
+      <div style="text-align: center; margin-bottom: 20px;">
+        <h2 style="margin: 0 0 5px 0; font-size: 16px;">Coffee and Tea Connection</h2>
+        <p style="margin: 0; font-size: 11px;">Est. 2016</p>
+        <p style="margin: 5px 0 0 0; font-size: 10px;">${dateTime}</p>
+      </div>
+      <div style="border-top: 1px dashed #000; margin: 10px 0;"></div>
+      <div style="display: flex; justify-content: space-between; margin: 5px 0; font-size: 12px;">
+        <span>Transaction No:</span>
+        <span>${transaction.number}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; margin: 5px 0; font-size: 12px;">
+        <span>Payment Method:</span>
+        <span>${transaction.method}</span>
+      </div>
+      ${transaction.method === "Non Cash" && transaction.nonCashSenderName ? `
+        <div style="display: flex; justify-content: space-between; margin: 5px 0; font-size: 12px;">
+          <span>Customer Name:</span>
+          <span>${transaction.nonCashSenderName}</span>
+        </div>
+      ` : ''}
+      ${transaction.method === "Non Cash" && transaction.nonCashNumber ? `
+        <div style="display: flex; justify-content: space-between; margin: 5px 0; font-size: 12px;">
+          <span>Reference No:</span>
+          <span>${transaction.nonCashNumber}</span>
+        </div>
+      ` : ''}
+      <div style="border-top: 1px dashed #000; margin: 10px 0;"></div>
+      <div style="font-weight: bold; margin-bottom: 8px; font-size: 12px;">ORDER SUMMARY:</div>
+      
+      ${hasItems ? transaction.items!.map(item => {
+        const addOnsTotal = (item.addOns || []).reduce((total) => total + ADD_ON_PRICE_VALUE, 0);
+        const itemBaseTotal = item.price * item.quantity;
+        const itemAddOnsTotal = addOnsTotal * item.quantity;
+        let itemTotal = itemBaseTotal + itemAddOnsTotal;
+        
+        // Check for individual item discount
+        const hasItemDiscount = item.discountType && item.discountType !== "None";
+        const discountedTotal = hasItemDiscount ? itemTotal * 0.8 : itemTotal;
+        const itemDiscountAmount = hasItemDiscount ? itemTotal - discountedTotal : 0;
+        
+        // Build item details string
+        let details = '';
+        if (item.size) details += `${item.size} · `;
+        if (item.temperature && item.temperature !== "Hot") details += `${item.temperature} · `;
+        if (item.sugar && item.sugar !== "100%") details += `Sugar ${item.sugar}`;
+        
+        return `
+          <div style="margin: 10px 0; border-bottom: 1px dotted #ddd; padding-bottom: 8px;">
+            <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 12px;">
+              <span>${item.quantity}x ${item.name}</span>
+              ${hasItemDiscount ? `
+                <div style="text-align: right;">
+                  <span style="text-decoration: line-through; font-size: 10px; color: #999;">₱${itemTotal.toFixed(2)}</span>
+                  <span style="color: #2d7a38; margin-left: 5px;">₱${discountedTotal.toFixed(2)}</span>
+                </div>
+              ` : `
+                <span>₱${itemTotal.toFixed(2)}</span>
+              `}
+            </div>
+            ${details ? `
+              <div style="font-size: 10px; color: #666; margin-top: 2px;">
+                ${details}
+              </div>
+            ` : ''}
+            ${hasItemDiscount ? `
+              <div style="font-size: 9px; color: #2d7a38; margin-top: 2px;">
+                ${item.discountType} Discount (20% off) -₱${itemDiscountAmount.toFixed(2)}
+              </div>
+            ` : ''}
+            <div style="margin-left: 15px; margin-top: 4px;">
+              <div style="display: flex; justify-content: space-between; font-size: 10px; color: #555;">
+                <span>  Base price (x${item.quantity}):</span>
+                <span>₱${itemBaseTotal.toFixed(2)}</span>
+              </div>
+              ${item.addOns && item.addOns.length > 0 ? `
+                <div style="margin-top: 3px;">
+                  <div style="font-size: 10px; color: #2d7a38; font-weight: 500;">  Add-ons:</div>
+                  ${item.addOns.map(addon => {
+                    return `
+                      <div style="display: flex; justify-content: space-between; font-size: 10px; color: #2d7a38; margin-left: 10px;">
+                        <span>    • ${addon}</span>
+                        <span>₱${(ADD_ON_PRICE_VALUE * item.quantity).toFixed(2)}</span>
+                      </div>
+                    `;
+                  }).join('')}
+                  <div style="display: flex; justify-content: space-between; font-size: 10px; color: #2d7a38; font-weight: 500; margin-top: 2px;">
+                    <span>  Add-ons total:</span>
+                    <span>₱${itemAddOnsTotal.toFixed(2)}</span>
+                  </div>
+                </div>
+              ` : ''}
+            </div>
+          </div>
+        `;
+      }).join('') : ''}
+      
+      <div style="border-top: 1px dashed #000; margin: 10px 0;"></div>
+      <div style="display: flex; justify-content: space-between; margin: 5px 0; font-size: 12px;">
+        <span>Subtotal:</span>
+        <span>₱${subtotal.toFixed(2)}</span>
+      </div>
+      ${discountAmount > 0 ? `
+        <div style="display: flex; justify-content: space-between; margin: 5px 0; font-size: 12px; color: #c0392b;">
+          <span>Discount (${transaction.discount?.type || 'Applied'}):</span>
+          <span>- ₱${discountAmount.toFixed(2)}</span>
+        </div>
+      ` : ''}
+      <div style="border-top: 1px double #000; margin: 10px 0;"></div>
+      <div style="display: flex; justify-content: space-between; margin: 5px 0; font-weight: bold; font-size: 14px;">
+        <span>TOTAL PAID:</span>
+        <span>₱${totalPaid.toFixed(2)}</span>
+      </div>
+      ${transaction.method === "Cash" && transaction.amountTendered ? `
+        <div style="display: flex; justify-content: space-between; margin: 5px 0; font-size: 12px;">
+          <span>Amount Received:</span>
+          <span>₱${parseFloat(transaction.amountTendered).toFixed(2)}</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin: 5px 0; font-size: 12px;">
+          <span>Change:</span>
+          <span>₱${(parseFloat(transaction.amountTendered) - totalPaid).toFixed(2)}</span>
+        </div>
+      ` : ''}
+      <div style="border-top: 1px dashed #000; margin: 10px 0;"></div>
+      <div style="text-align: center; margin-top: 20px; font-size: 10px;">
+        <p>Thank you for your order!</p>
+        <p>Please come again </p>
+      </div>
+    </div>
+  `;
+};
+
 interface OrderItem {
   name: string;
   category: string;
@@ -29,7 +213,7 @@ interface Tab {
   createdAt: Date;
 }
 
-// Distinct colors for categories
+// Distinct colors for categories (sorted)
 const categoryColors: Record<string, { bg: string; hoverBg: string; activeBg: string; text: string }> = {
   Coffee: { bg: "#FFF0F5", hoverBg: "#FFE4EC", activeBg: "#C0392B", text: "#8B5E6E" },
   "Non Coffee": { bg: "#E8F4F8", hoverBg: "#D4EAF0", activeBg: "#2980B9", text: "#2C6E7A" },
@@ -117,7 +301,7 @@ const RECIPES: Recipes = {
   "Fruit Tea - Wintermelon": { "Medium": { "Jasmine Green Tea": 200, "Syrup": 40, "Fructose": 15 }, "Large": { "Jasmine Green Tea": 300, "Syrup": 60, "Fructose": 25 } }
 };
 
-// Serving sizes ng Add-Ons
+// Serving sizes ng Add-Ons (sorted)
 const ADD_ON_SERVING_SIZES: Record<string, number> = {
   Pearl: 50,
   Nata: 40,
@@ -128,14 +312,14 @@ const ADD_ON_SERVING_SIZES: Record<string, number> = {
   "Whip Cream": 20
 };
 
-// Allowed Add-ons per Category
+// Allowed Add-ons per Category (sorted)
 const CATEGORY_ADD_ONS: Record<string, string[]> = {
-  "Coffee": ["Espresso", "Coffee Jelly", "Caramel", "Whip Cream"],
-  "Non Coffee": ["Pearl", "Nata", "Coffee Jelly", "Oreo", "Caramel", "Whip Cream"],
-  "Milktea": ["Pearl", "Nata", "Coffee Jelly", "Oreo", "Whip Cream"],
-  "Yakult Mix": ["Pearl", "Nata", "Coffee Jelly"],
-  "Fruit Tea": ["Pearl", "Nata", "Coffee Jelly"],
-  "Frappe": ["Espresso", "Coffee Jelly", "Oreo", "Caramel", "Pearl", "Nata", "Whip Cream"],
+  "Coffee": ["Caramel", "Coffee Jelly", "Espresso", "Whip Cream"],
+  "Non Coffee": ["Caramel", "Coffee Jelly", "Nata", "Oreo", "Pearl", "Whip Cream"],
+  "Milktea": ["Coffee Jelly", "Nata", "Oreo", "Pearl", "Whip Cream"],
+  "Yakult Mix": ["Coffee Jelly", "Nata", "Pearl"],
+  "Fruit Tea": ["Coffee Jelly", "Nata", "Pearl"],
+  "Frappe": ["Caramel", "Coffee Jelly", "Espresso", "Nata", "Oreo", "Pearl", "Whip Cream"],
   "Hot Tea": [],
   "Food & Bites": []
 };
@@ -187,7 +371,852 @@ function DeleteConfirmModal({
     </div>
   );
 }
-// Manage Modal Component
+
+// Individual Discount Modal (for per-item "Add Discount" button) - has BOTH PWD and Senior options
+function IndividualDiscountModal({ 
+  isOpen, 
+  onClose, 
+  onApply, 
+  itemName,
+  currentDiscount
+}: { 
+  isOpen: boolean; 
+  onClose: () => void; 
+  onApply: (discountType: "None" | "PWD" | "Senior", name: string, id: string) => void;
+  itemName: string;
+  currentDiscount: { type: "None" | "PWD" | "Senior"; name: string; id: string };
+}) {
+  const [discountType, setDiscountType] = useState<"PWD" | "Senior">(
+    currentDiscount.type !== "None" ? currentDiscount.type : "PWD"
+  );
+  const [activeInput, setActiveInput] = useState<"name" | "id" | null>(null);
+  const [tempName, setTempName] = useState(currentDiscount.name);
+  const [tempID, setTempID] = useState(currentDiscount.id);
+  const [isLandscape, setIsLandscape] = useState(false);
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const checkOrientation = () => {
+      setIsLandscape(window.innerWidth > window.innerHeight);
+    };
+    checkOrientation();
+    window.addEventListener('resize', checkOrientation);
+    return () => window.removeEventListener('resize', checkOrientation);
+  }, []);
+
+  useEffect(() => {
+    if (activeInput && modalRef.current) {
+      setTimeout(() => {
+        modalRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 100);
+    }
+  }, [activeInput]);
+
+  const handleKeyPress = (key: string) => {
+    if (activeInput === "name") {
+      if (key === "BACKSPACE") {
+        setTempName(prev => prev.slice(0, -1));
+      } else if (key === "SPACE") {
+        setTempName(prev => prev + " ");
+      } else if (key === "CLEAR") {
+        setTempName("");
+      } else {
+        setTempName(prev => prev + key);
+      }
+    } else if (activeInput === "id") {
+      if (key === "BACKSPACE") {
+        setTempID(prev => prev.slice(0, -1));
+      } else if (key === "CLEAR") {
+        setTempID("");
+      } else if (/^[0-9]$/.test(key)) {
+        setTempID(prev => prev + key);
+      }
+    }
+  };
+
+  const handleApply = () => {
+    if (tempName.trim() && tempID.trim()) {
+      onApply(discountType, tempName, tempID);
+      setActiveInput(null);
+      onClose();
+    }
+  };
+
+  const handleClose = () => {
+    setTempName(currentDiscount.name);
+    setTempID(currentDiscount.id);
+    setActiveInput(null);
+    onClose();
+  };
+
+  if (!isOpen) return null;
+
+  const isRemoveButtonEnabled = currentDiscount.type !== "None";
+  const isApplyButtonEnabled = tempName.trim() && tempID.trim();
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-[70] p-4">
+      <div ref={modalRef} className={`bg-white rounded-2xl shadow-2xl w-full max-w-3xl ${isLandscape ? 'max-h-[85vh]' : 'max-h-[90vh]'} overflow-y-auto`}>
+        <div className="p-6">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-2xl font-bold" style={{ color: "#3b2212" }}>
+              Apply Discount
+            </h2>
+            <button
+              onClick={handleClose}
+              className="w-12 h-12 rounded-full flex items-center justify-center text-xl active:scale-95 touch-manipulation"
+              style={{ background: "#f7f3ef", color: "#3b2212", border: "1px solid #e8ddd4", minHeight: "44px" }}
+            >
+              ✕
+            </button>
+          </div>
+          
+          <p className="text-sm mb-5" style={{ color: "#a07850" }}>
+            {itemName.length > 45 ? itemName.substring(0, 42) + "..." : itemName} - 20% off
+          </p>
+
+          <div className="flex gap-3 mb-5">
+            {(["PWD", "Senior"] as const).map((type) => (
+              <button
+                key={type}
+                onClick={() => setDiscountType(type)}
+                className={`flex-1 py-3 rounded-xl font-semibold text-base transition-all active:scale-95 touch-manipulation min-h-[48px] ${
+                  discountType === type
+                    ? "bg-[#3b2212] text-white"
+                    : "bg-[#faf7f4] text-[#3b2212] border border-[#e8ddd4]"
+                }`}
+              >
+                {type}
+              </button>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 mb-5">
+            <div>
+              <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>
+                Customer Name <span style={{ color: "#c0392b" }}>*</span>
+              </label>
+              <div
+                onClick={() => setActiveInput("name")}
+                className={`w-full rounded-xl px-4 py-3 text-base transition-all cursor-pointer ${
+                  activeInput === "name" ? "ring-2 ring-[#3b2212]" : ""
+                }`}
+                style={{
+                  background: "#faf7f4",
+                  border: "1.5px solid #e8ddd4",
+                  color: "#3b2212",
+                  minHeight: "52px",
+                }}
+              >
+                {tempName || <span style={{ color: "#c0b090" }}>Tap to enter name...</span>}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>
+                ID Number <span style={{ color: "#c0392b" }}>*</span>
+              </label>
+              <div
+                onClick={() => setActiveInput("id")}
+                className={`w-full rounded-xl px-4 py-3 text-base transition-all cursor-pointer font-mono ${
+                  activeInput === "id" ? "ring-2 ring-[#3b2212]" : ""
+                }`}
+                style={{
+                  background: "#faf7f4",
+                  border: "1.5px solid #e8ddd4",
+                  color: "#3b2212",
+                  minHeight: "52px",
+                }}
+              >
+                {tempID || <span style={{ color: "#c0b090" }}>Tap to enter ID number...</span>}
+              </div>
+            </div>
+          </div>
+
+          {activeInput && (
+            <div className="mt-4 pt-4 border-t" style={{ borderColor: "#e8ddd4" }}>
+              <div className="flex justify-between items-center mb-3">
+                <p className="text-sm font-semibold" style={{ color: "#3b2212" }}>
+                  Enter {activeInput === "name" ? "Customer Name" : "ID Number"}
+                </p>
+                <button
+                  onClick={() => setActiveInput(null)}
+                  className="px-5 py-2 rounded-lg text-sm font-semibold active:scale-95 touch-manipulation min-h-[40px]"
+                  style={{ background: "#3b2212", color: "white" }}
+                >
+                  Done
+                </button>
+              </div>
+              
+              {activeInput === "name" ? (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-10 gap-1.5">
+                    {["Q","W","E","R","T","Y","U","I","O","P"].map((key) => (
+                      <button key={key} onClick={() => handleKeyPress(key)}
+                        className="py-3 rounded-lg font-semibold text-base transition-all active:scale-95 touch-manipulation min-h-[44px]"
+                        style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
+                        {key}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-9 gap-1.5">
+                    {["A","S","D","F","G","H","J","K","L"].map((key) => (
+                      <button key={key} onClick={() => handleKeyPress(key)}
+                        className="py-3 rounded-lg font-semibold text-base transition-all active:scale-95 touch-manipulation min-h-[44px]"
+                        style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
+                        {key}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-9 gap-1.5">
+                    {["Z","X","C","V","B","N","M"].map((key) => (
+                      <button key={key} onClick={() => handleKeyPress(key)}
+                        className="py-3 rounded-lg font-semibold text-base transition-all active:scale-95 touch-manipulation min-h-[44px]"
+                        style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
+                        {key}
+                      </button>
+                    ))}
+                    <button onClick={() => handleKeyPress("SPACE")}
+                      className="py-3 rounded-lg font-semibold text-sm transition-all active:scale-95 touch-manipulation col-span-2 min-h-[44px]"
+                      style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
+                      SPACE
+                    </button>
+                    <button onClick={() => handleKeyPress("BACKSPACE")}
+                      className="py-3 rounded-lg font-semibold text-base transition-all active:scale-95 touch-manipulation min-h-[44px]"
+                      style={{ background: "#fee2e2", color: "#c0392b", border: "1px solid #f5c6c6" }}>
+                      ⌫
+                    </button>
+                    <button onClick={() => handleKeyPress("CLEAR")}
+                      className="py-3 rounded-lg font-semibold text-sm transition-all active:scale-95 touch-manipulation min-h-[44px]"
+                      style={{ background: "#fff0f0", color: "#c0392b", border: "1px solid #f5c6c6" }}>
+                      CLEAR
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div className="grid grid-cols-3 gap-2 mb-2">
+                    {["1","2","3","4","5","6","7","8","9"].map((num) => (
+                      <button key={num} onClick={() => handleKeyPress(num)}
+                        className="py-4 rounded-xl font-bold text-2xl transition-all active:scale-95 touch-manipulation min-h-[56px]"
+                        style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
+                        {num}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button onClick={() => handleKeyPress("CLEAR")}
+                      className="py-4 rounded-xl font-bold text-base transition-all active:scale-95 touch-manipulation min-h-[56px]"
+                      style={{ background: "#fff0f0", color: "#c0392b", border: "1.5px solid #f5c6c6" }}>
+                      CLEAR
+                    </button>
+                    <button onClick={() => handleKeyPress("0")}
+                      className="py-4 rounded-xl font-bold text-2xl transition-all active:scale-95 touch-manipulation min-h-[56px]"
+                      style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
+                      0
+                    </button>
+                    <button onClick={() => handleKeyPress("BACKSPACE")}
+                      className="py-4 rounded-xl font-bold text-2xl transition-all active:scale-95 touch-manipulation min-h-[56px]"
+                      style={{ background: "#fee2e2", color: "#c0392b", border: "1.5px solid #f5c6c6" }}>
+                      ⌫
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="flex gap-4 mt-6">
+            <button
+              disabled={!isRemoveButtonEnabled}
+              onClick={() => {
+                onApply("None", "", "");
+                setActiveInput(null);
+                onClose();
+              }}
+              className="flex-1 py-4 rounded-xl font-semibold text-base transition-all active:scale-95 touch-manipulation min-h-[52px]"
+              style={{
+                background: !isRemoveButtonEnabled ? "#e8e0d8" : "#f0e8e0",
+                color: !isRemoveButtonEnabled ? "#b09070" : "#3b2212",
+                cursor: !isRemoveButtonEnabled ? "not-allowed" : "pointer"
+              }}
+            >
+              Remove Discount
+            </button>
+            <button
+              disabled={!isApplyButtonEnabled}
+              onClick={handleApply}
+              className="flex-1 py-4 rounded-xl font-semibold text-base transition-all active:scale-95 touch-manipulation min-h-[52px]"
+              style={{
+                background: !isApplyButtonEnabled ? "#e8e0d8" : "#2d7a38",
+                color: !isApplyButtonEnabled ? "#b09070" : "white",
+                cursor: !isApplyButtonEnabled ? "not-allowed" : "pointer",
+              }}
+            >
+              Apply Discount
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// PWD ONLY Modal (for bulk PWD button)
+function PWDDiscountModal({ 
+  isOpen, 
+  onClose, 
+  onApply, 
+  itemName,
+  currentName,
+  currentID
+}: { 
+  isOpen: boolean; 
+  onClose: () => void; 
+  onApply: (name: string, id: string) => void;
+  itemName: string;
+  currentName: string;
+  currentID: string;
+}) {
+  const [activeInput, setActiveInput] = useState<"name" | "id" | null>(null);
+  const [tempName, setTempName] = useState(currentName);
+  const [tempID, setTempID] = useState(currentID);
+  const [isLandscape, setIsLandscape] = useState(false);
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const checkOrientation = () => {
+      setIsLandscape(window.innerWidth > window.innerHeight);
+    };
+    checkOrientation();
+    window.addEventListener('resize', checkOrientation);
+    return () => window.removeEventListener('resize', checkOrientation);
+  }, []);
+
+  useEffect(() => {
+    if (activeInput && modalRef.current) {
+      setTimeout(() => {
+        modalRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 100);
+    }
+  }, [activeInput]);
+
+  const handleKeyPress = (key: string) => {
+    if (activeInput === "name") {
+      if (key === "BACKSPACE") {
+        setTempName(prev => prev.slice(0, -1));
+      } else if (key === "SPACE") {
+        setTempName(prev => prev + " ");
+      } else if (key === "CLEAR") {
+        setTempName("");
+      } else {
+        setTempName(prev => prev + key);
+      }
+    } else if (activeInput === "id") {
+      if (key === "BACKSPACE") {
+        setTempID(prev => prev.slice(0, -1));
+      } else if (key === "CLEAR") {
+        setTempID("");
+      } else if (/^[0-9]$/.test(key)) {
+        setTempID(prev => prev + key);
+      }
+    }
+  };
+
+  const handleApply = () => {
+    if (tempName.trim() && tempID.trim()) {
+      onApply(tempName, tempID);
+      setActiveInput(null);
+      onClose();
+    }
+  };
+
+  const handleClose = () => {
+    setTempName(currentName);
+    setTempID(currentID);
+    setActiveInput(null);
+    onClose();
+  };
+
+  if (!isOpen) return null;
+
+  const isRemoveButtonEnabled = currentName !== "";
+  const isApplyButtonEnabled = tempName.trim() && tempID.trim();
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-[70] p-4">
+      <div ref={modalRef} className={`bg-white rounded-2xl shadow-2xl w-full max-w-3xl ${isLandscape ? 'max-h-[85vh]' : 'max-h-[90vh]'} overflow-y-auto`}>
+        <div className="p-6">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-2xl font-bold" style={{ color: "#3b2212" }}>
+              Apply PWD Discount
+            </h2>
+            <button
+              onClick={handleClose}
+              className="w-12 h-12 rounded-full flex items-center justify-center text-xl active:scale-95 touch-manipulation"
+              style={{ background: "#f7f3ef", color: "#3b2212", border: "1px solid #e8ddd4", minHeight: "44px" }}
+            >
+              ✕
+            </button>
+          </div>
+          
+          <p className="text-sm mb-5" style={{ color: "#a07850" }}>
+            {itemName.length > 45 ? itemName.substring(0, 42) + "..." : itemName} - 20% off (PWD)
+          </p>
+
+          <div className="mb-5 p-3 rounded-xl text-center" style={{ background: "#e8f5e9", color: "#2d7a38" }}>
+            <span className="font-semibold">PWD Discount (20% off)</span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 mb-5">
+            <div>
+              <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>
+                Customer Name <span style={{ color: "#c0392b" }}>*</span>
+              </label>
+              <div
+                onClick={() => setActiveInput("name")}
+                className={`w-full rounded-xl px-4 py-3 text-base transition-all cursor-pointer ${
+                  activeInput === "name" ? "ring-2 ring-[#3b2212]" : ""
+                }`}
+                style={{
+                  background: "#faf7f4",
+                  border: "1.5px solid #e8ddd4",
+                  color: "#3b2212",
+                  minHeight: "52px",
+                }}
+              >
+                {tempName || <span style={{ color: "#c0b090" }}>Tap to enter name...</span>}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>
+                PWD ID Number <span style={{ color: "#c0392b" }}>*</span>
+              </label>
+              <div
+                onClick={() => setActiveInput("id")}
+                className={`w-full rounded-xl px-4 py-3 text-base transition-all cursor-pointer font-mono ${
+                  activeInput === "id" ? "ring-2 ring-[#3b2212]" : ""
+                }`}
+                style={{
+                  background: "#faf7f4",
+                  border: "1.5px solid #e8ddd4",
+                  color: "#3b2212",
+                  minHeight: "52px",
+                }}
+              >
+                {tempID || <span style={{ color: "#c0b090" }}>Tap to enter PWD ID...</span>}
+              </div>
+            </div>
+          </div>
+
+          {activeInput && (
+            <div className="mt-4 pt-4 border-t" style={{ borderColor: "#e8ddd4" }}>
+              <div className="flex justify-between items-center mb-3">
+                <p className="text-sm font-semibold" style={{ color: "#3b2212" }}>
+                  Enter {activeInput === "name" ? "Customer Name" : "PWD ID Number"}
+                </p>
+                <button
+                  onClick={() => setActiveInput(null)}
+                  className="px-5 py-2 rounded-lg text-sm font-semibold active:scale-95 touch-manipulation min-h-[40px]"
+                  style={{ background: "#3b2212", color: "white" }}
+                >
+                  Done
+                </button>
+              </div>
+              
+              {activeInput === "name" ? (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-10 gap-1.5">
+                    {["Q","W","E","R","T","Y","U","I","O","P"].map((key) => (
+                      <button key={key} onClick={() => handleKeyPress(key)}
+                        className="py-3 rounded-lg font-semibold text-base transition-all active:scale-95 touch-manipulation min-h-[44px]"
+                        style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
+                        {key}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-9 gap-1.5">
+                    {["A","S","D","F","G","H","J","K","L"].map((key) => (
+                      <button key={key} onClick={() => handleKeyPress(key)}
+                        className="py-3 rounded-lg font-semibold text-base transition-all active:scale-95 touch-manipulation min-h-[44px]"
+                        style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
+                        {key}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-9 gap-1.5">
+                    {["Z","X","C","V","B","N","M"].map((key) => (
+                      <button key={key} onClick={() => handleKeyPress(key)}
+                        className="py-3 rounded-lg font-semibold text-base transition-all active:scale-95 touch-manipulation min-h-[44px]"
+                        style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
+                        {key}
+                      </button>
+                    ))}
+                    <button onClick={() => handleKeyPress("SPACE")}
+                      className="py-3 rounded-lg font-semibold text-sm transition-all active:scale-95 touch-manipulation col-span-2 min-h-[44px]"
+                      style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
+                      SPACE
+                    </button>
+                    <button onClick={() => handleKeyPress("BACKSPACE")}
+                      className="py-3 rounded-lg font-semibold text-base transition-all active:scale-95 touch-manipulation min-h-[44px]"
+                      style={{ background: "#fee2e2", color: "#c0392b", border: "1px solid #f5c6c6" }}>
+                      ⌫
+                    </button>
+                    <button onClick={() => handleKeyPress("CLEAR")}
+                      className="py-3 rounded-lg font-semibold text-sm transition-all active:scale-95 touch-manipulation min-h-[44px]"
+                      style={{ background: "#fff0f0", color: "#c0392b", border: "1px solid #f5c6c6" }}>
+                      CLEAR
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div className="grid grid-cols-3 gap-2 mb-2">
+                    {["1","2","3","4","5","6","7","8","9"].map((num) => (
+                      <button key={num} onClick={() => handleKeyPress(num)}
+                        className="py-4 rounded-xl font-bold text-2xl transition-all active:scale-95 touch-manipulation min-h-[56px]"
+                        style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
+                        {num}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button onClick={() => handleKeyPress("CLEAR")}
+                      className="py-4 rounded-xl font-bold text-base transition-all active:scale-95 touch-manipulation min-h-[56px]"
+                      style={{ background: "#fff0f0", color: "#c0392b", border: "1.5px solid #f5c6c6" }}>
+                      CLEAR
+                    </button>
+                    <button onClick={() => handleKeyPress("0")}
+                      className="py-4 rounded-xl font-bold text-2xl transition-all active:scale-95 touch-manipulation min-h-[56px]"
+                      style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
+                      0
+                    </button>
+                    <button onClick={() => handleKeyPress("BACKSPACE")}
+                      className="py-4 rounded-xl font-bold text-2xl transition-all active:scale-95 touch-manipulation min-h-[56px]"
+                      style={{ background: "#fee2e2", color: "#c0392b", border: "1.5px solid #f5c6c6" }}>
+                      ⌫
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="flex gap-4 mt-6">
+            <button
+              disabled={!isRemoveButtonEnabled}
+              onClick={() => {
+                onApply("", "");
+                setActiveInput(null);
+                onClose();
+              }}
+              className="flex-1 py-4 rounded-xl font-semibold text-base transition-all active:scale-95 touch-manipulation min-h-[52px]"
+              style={{
+                background: !isRemoveButtonEnabled ? "#e8e0d8" : "#f0e8e0",
+                color: !isRemoveButtonEnabled ? "#b09070" : "#3b2212",
+                cursor: !isRemoveButtonEnabled ? "not-allowed" : "pointer"
+              }}
+            >
+              Remove Discount
+            </button>
+            <button
+              disabled={!isApplyButtonEnabled}
+              onClick={handleApply}
+              className="flex-1 py-4 rounded-xl font-semibold text-base transition-all active:scale-95 touch-manipulation min-h-[52px]"
+              style={{
+                background: !isApplyButtonEnabled ? "#e8e0d8" : "#2d7a38",
+                color: !isApplyButtonEnabled ? "#b09070" : "white",
+                cursor: !isApplyButtonEnabled ? "not-allowed" : "pointer",
+              }}
+            >
+              Apply PWD Discount
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Senior ONLY Modal (for bulk Senior button)
+function SeniorDiscountModal({ 
+  isOpen, 
+  onClose, 
+  onApply, 
+  itemName,
+  currentName,
+  currentID
+}: { 
+  isOpen: boolean; 
+  onClose: () => void; 
+  onApply: (name: string, id: string) => void;
+  itemName: string;
+  currentName: string;
+  currentID: string;
+}) {
+  const [activeInput, setActiveInput] = useState<"name" | "id" | null>(null);
+  const [tempName, setTempName] = useState(currentName);
+  const [tempID, setTempID] = useState(currentID);
+  const [isLandscape, setIsLandscape] = useState(false);
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const checkOrientation = () => {
+      setIsLandscape(window.innerWidth > window.innerHeight);
+    };
+    checkOrientation();
+    window.addEventListener('resize', checkOrientation);
+    return () => window.removeEventListener('resize', checkOrientation);
+  }, []);
+
+  useEffect(() => {
+    if (activeInput && modalRef.current) {
+      setTimeout(() => {
+        modalRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 100);
+    }
+  }, [activeInput]);
+
+  const handleKeyPress = (key: string) => {
+    if (activeInput === "name") {
+      if (key === "BACKSPACE") {
+        setTempName(prev => prev.slice(0, -1));
+      } else if (key === "SPACE") {
+        setTempName(prev => prev + " ");
+      } else if (key === "CLEAR") {
+        setTempName("");
+      } else {
+        setTempName(prev => prev + key);
+      }
+    } else if (activeInput === "id") {
+      if (key === "BACKSPACE") {
+        setTempID(prev => prev.slice(0, -1));
+      } else if (key === "CLEAR") {
+        setTempID("");
+      } else if (/^[0-9]$/.test(key)) {
+        setTempID(prev => prev + key);
+      }
+    }
+  };
+
+  const handleApply = () => {
+    if (tempName.trim() && tempID.trim()) {
+      onApply(tempName, tempID);
+      setActiveInput(null);
+      onClose();
+    }
+  };
+
+  const handleClose = () => {
+    setTempName(currentName);
+    setTempID(currentID);
+    setActiveInput(null);
+    onClose();
+  };
+
+  if (!isOpen) return null;
+
+  const isRemoveButtonEnabled = currentName !== "";
+  const isApplyButtonEnabled = tempName.trim() && tempID.trim();
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-[70] p-4">
+      <div ref={modalRef} className={`bg-white rounded-2xl shadow-2xl w-full max-w-3xl ${isLandscape ? 'max-h-[85vh]' : 'max-h-[90vh]'} overflow-y-auto`}>
+        <div className="p-6">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-2xl font-bold" style={{ color: "#3b2212" }}>
+              Apply Senior Discount
+            </h2>
+            <button
+              onClick={handleClose}
+              className="w-12 h-12 rounded-full flex items-center justify-center text-xl active:scale-95 touch-manipulation"
+              style={{ background: "#f7f3ef", color: "#3b2212", border: "1px solid #e8ddd4", minHeight: "44px" }}
+            >
+              ✕
+            </button>
+          </div>
+          
+          <p className="text-sm mb-5" style={{ color: "#a07850" }}>
+            {itemName.length > 45 ? itemName.substring(0, 42) + "..." : itemName} - 20% off (Senior)
+          </p>
+
+          <div className="mb-5 p-3 rounded-xl text-center" style={{ background: "#fff3e0", color: "#e67e22" }}>
+            <span className="font-semibold">Senior Discount (20% off)</span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 mb-5">
+            <div>
+              <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>
+                Customer Name <span style={{ color: "#c0392b" }}>*</span>
+              </label>
+              <div
+                onClick={() => setActiveInput("name")}
+                className={`w-full rounded-xl px-4 py-3 text-base transition-all cursor-pointer ${
+                  activeInput === "name" ? "ring-2 ring-[#3b2212]" : ""
+                }`}
+                style={{
+                  background: "#faf7f4",
+                  border: "1.5px solid #e8ddd4",
+                  color: "#3b2212",
+                  minHeight: "52px",
+                }}
+              >
+                {tempName || <span style={{ color: "#c0b090" }}>Tap to enter name...</span>}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>
+                Senior ID Number <span style={{ color: "#c0392b" }}>*</span>
+              </label>
+              <div
+                onClick={() => setActiveInput("id")}
+                className={`w-full rounded-xl px-4 py-3 text-base transition-all cursor-pointer font-mono ${
+                  activeInput === "id" ? "ring-2 ring-[#3b2212]" : ""
+                }`}
+                style={{
+                  background: "#faf7f4",
+                  border: "1.5px solid #e8ddd4",
+                  color: "#3b2212",
+                  minHeight: "52px",
+                }}
+              >
+                {tempID || <span style={{ color: "#c0b090" }}>Tap to enter Senior ID...</span>}
+              </div>
+            </div>
+          </div>
+
+          {activeInput && (
+            <div className="mt-4 pt-4 border-t" style={{ borderColor: "#e8ddd4" }}>
+              <div className="flex justify-between items-center mb-3">
+                <p className="text-sm font-semibold" style={{ color: "#3b2212" }}>
+                  Enter {activeInput === "name" ? "Customer Name" : "Senior ID Number"}
+                </p>
+                <button
+                  onClick={() => setActiveInput(null)}
+                  className="px-5 py-2 rounded-lg text-sm font-semibold active:scale-95 touch-manipulation min-h-[40px]"
+                  style={{ background: "#3b2212", color: "white" }}
+                >
+                  Done
+                </button>
+              </div>
+              
+              {activeInput === "name" ? (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-10 gap-1.5">
+                    {["Q","W","E","R","T","Y","U","I","O","P"].map((key) => (
+                      <button key={key} onClick={() => handleKeyPress(key)}
+                        className="py-3 rounded-lg font-semibold text-base transition-all active:scale-95 touch-manipulation min-h-[44px]"
+                        style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
+                        {key}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-9 gap-1.5">
+                    {["A","S","D","F","G","H","J","K","L"].map((key) => (
+                      <button key={key} onClick={() => handleKeyPress(key)}
+                        className="py-3 rounded-lg font-semibold text-base transition-all active:scale-95 touch-manipulation min-h-[44px]"
+                        style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
+                        {key}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-9 gap-1.5">
+                    {["Z","X","C","V","B","N","M"].map((key) => (
+                      <button key={key} onClick={() => handleKeyPress(key)}
+                        className="py-3 rounded-lg font-semibold text-base transition-all active:scale-95 touch-manipulation min-h-[44px]"
+                        style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
+                        {key}
+                      </button>
+                    ))}
+                    <button onClick={() => handleKeyPress("SPACE")}
+                      className="py-3 rounded-lg font-semibold text-sm transition-all active:scale-95 touch-manipulation col-span-2 min-h-[44px]"
+                      style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
+                      SPACE
+                    </button>
+                    <button onClick={() => handleKeyPress("BACKSPACE")}
+                      className="py-3 rounded-lg font-semibold text-base transition-all active:scale-95 touch-manipulation min-h-[44px]"
+                      style={{ background: "#fee2e2", color: "#c0392b", border: "1px solid #f5c6c6" }}>
+                      ⌫
+                    </button>
+                    <button onClick={() => handleKeyPress("CLEAR")}
+                      className="py-3 rounded-lg font-semibold text-sm transition-all active:scale-95 touch-manipulation min-h-[44px]"
+                      style={{ background: "#fff0f0", color: "#c0392b", border: "1px solid #f5c6c6" }}>
+                      CLEAR
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div className="grid grid-cols-3 gap-2 mb-2">
+                    {["1","2","3","4","5","6","7","8","9"].map((num) => (
+                      <button key={num} onClick={() => handleKeyPress(num)}
+                        className="py-4 rounded-xl font-bold text-2xl transition-all active:scale-95 touch-manipulation min-h-[56px]"
+                        style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
+                        {num}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button onClick={() => handleKeyPress("CLEAR")}
+                      className="py-4 rounded-xl font-bold text-base transition-all active:scale-95 touch-manipulation min-h-[56px]"
+                      style={{ background: "#fff0f0", color: "#c0392b", border: "1.5px solid #f5c6c6" }}>
+                      CLEAR
+                    </button>
+                    <button onClick={() => handleKeyPress("0")}
+                      className="py-4 rounded-xl font-bold text-2xl transition-all active:scale-95 touch-manipulation min-h-[56px]"
+                      style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
+                      0
+                    </button>
+                    <button onClick={() => handleKeyPress("BACKSPACE")}
+                      className="py-4 rounded-xl font-bold text-2xl transition-all active:scale-95 touch-manipulation min-h-[56px]"
+                      style={{ background: "#fee2e2", color: "#c0392b", border: "1.5px solid #f5c6c6" }}>
+                      ⌫
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="flex gap-4 mt-6">
+            <button
+              disabled={!isRemoveButtonEnabled}
+              onClick={() => {
+                onApply("", "");
+                setActiveInput(null);
+                onClose();
+              }}
+              className="flex-1 py-4 rounded-xl font-semibold text-base transition-all active:scale-95 touch-manipulation min-h-[52px]"
+              style={{
+                background: !isRemoveButtonEnabled ? "#e8e0d8" : "#f0e8e0",
+                color: !isRemoveButtonEnabled ? "#b09070" : "#3b2212",
+                cursor: !isRemoveButtonEnabled ? "not-allowed" : "pointer"
+              }}
+            >
+              Remove Discount
+            </button>
+            <button
+              disabled={!isApplyButtonEnabled}
+              onClick={handleApply}
+              className="flex-1 py-4 rounded-xl font-semibold text-base transition-all active:scale-95 touch-manipulation min-h-[52px]"
+              style={{
+                background: !isApplyButtonEnabled ? "#e8e0d8" : "#2d7a38",
+                color: !isApplyButtonEnabled ? "#b09070" : "white",
+                cursor: !isApplyButtonEnabled ? "not-allowed" : "pointer",
+              }}
+            >
+              Apply Senior Discount
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Manage Modal Component with alphabetical sorting
 function ManageModal({ 
   isOpen, 
   onClose, 
@@ -226,14 +1255,17 @@ function ManageModal({
 
   if (!isOpen) return null;
 
-  // Get color for a category
+  // Sort categories alphabetically
+  const sortedCategories = sortAlphabetically(categories);
+  // Sort items for the selected category alphabetically
+  const sortedItems = sortAlphabetically(itemsByCategory[selectedCategory] || []);
+
   const getCategoryColor = (categoryName: string) => {
     const colors = existingCategoryColors[categoryName];
     if (colors) return colors.activeBg;
-    return "#3b2212"; // default color
+    return "#3b2212";
   };
 
-  // Get background color for category dropdown item
   const getCategoryBgColor = (categoryName: string) => {
     const colors = existingCategoryColors[categoryName];
     if (colors) return colors.bg;
@@ -314,8 +1346,8 @@ function ManageModal({
               <h2 className="text-2xl font-bold" style={{ color: "#3b2212" }}>Manage Menu</h2>
               <button
                 onClick={onClose}
-                className="w-10 h-10 rounded-full flex items-center justify-center text-xl"
-                style={{ background: "#f7f3ef", color: "#3b2212", border: "1px solid #e8ddd4" }}
+                className="w-12 h-12 rounded-full flex items-center justify-center text-xl active:scale-95 touch-manipulation"
+                style={{ background: "#f7f3ef", color: "#3b2212", border: "1px solid #e8ddd4", minHeight: "44px" }}
               >
                 ✕
               </button>
@@ -324,7 +1356,7 @@ function ManageModal({
             <div className="flex gap-2 mb-6 border-b border-[#e8ddd4]">
               <button
                 onClick={() => { setActiveTab("category"); setMessage(null); }}
-                className={`px-6 py-3 font-semibold transition-all ${
+                className={`px-6 py-3 font-semibold transition-all min-h-[44px] ${
                   activeTab === "category"
                     ? "border-b-2 border-[#3b2212] text-[#3b2212]"
                     : "text-[#a07850] hover:text-[#3b2212]"
@@ -334,7 +1366,7 @@ function ManageModal({
               </button>
               <button
                 onClick={() => { setActiveTab("item"); setMessage(null); }}
-                className={`px-6 py-3 font-semibold transition-all ${
+                className={`px-6 py-3 font-semibold transition-all min-h-[44px] ${
                   activeTab === "item"
                     ? "border-b-2 border-[#3b2212] text-[#3b2212]"
                     : "text-[#a07850] hover:text-[#3b2212]"
@@ -355,7 +1387,7 @@ function ManageModal({
                     value={categoryName}
                     onChange={(e) => setCategoryName(e.target.value)}
                     placeholder="e.g., Smoothies, Iced Tea, Pastries"
-                    className="w-full rounded-xl px-4 py-3 text-base outline-none"
+                    className="w-full rounded-xl px-4 py-3 text-base outline-none min-h-[48px]"
                     style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
                     onKeyPress={(e) => e.key === "Enter" && handleAddCategory()}
                   />
@@ -386,13 +1418,12 @@ function ManageModal({
 
                 <button
                   onClick={handleAddCategory}
-                  className="w-full py-3 rounded-xl font-semibold text-lg transition-all active:scale-95 touch-manipulation"
+                  className="w-full py-4 rounded-xl font-semibold text-lg transition-all active:scale-95 touch-manipulation min-h-[52px]"
                   style={{ background: "#3b2212", color: "white" }}
                 >
                   + Add Category
                 </button>
 
-                {/* Notification under Add Category button */}
                 {message && (
                   <div
                     className={`p-3 rounded-xl text-center transition-all duration-300 ${
@@ -410,10 +1441,10 @@ function ManageModal({
 
                 <div className="mt-6 pt-4 border-t" style={{ borderColor: "#e8ddd4" }}>
                   <h3 className="text-md font-semibold mb-3" style={{ color: "#3b2212" }}>
-                    Existing Categories
+                    Existing Categories (Alphabetical)
                   </h3>
                   <div className="space-y-2 max-h-64 overflow-y-auto">
-                    {categories.map((cat) => {
+                    {sortedCategories.map((cat) => {
                       const catColor = getCategoryColor(cat);
                       return (
                         <div
@@ -427,7 +1458,7 @@ function ManageModal({
                           </div>
                           <button
                             onClick={() => handleDeleteClick("category", cat)}
-                            className="px-3 py-1.5 rounded-lg text-sm font-semibold transition-all active:scale-95"
+                            className="px-4 py-2 rounded-lg text-sm font-semibold transition-all active:scale-95 touch-manipulation min-h-[40px]"
                             style={{ background: "#fee2e2", color: "#c0392b" }}
                           >
                             Delete
@@ -449,7 +1480,7 @@ function ManageModal({
                   <select
                     value={selectedCategory}
                     onChange={(e) => setSelectedCategory(e.target.value)}
-                    className="w-full rounded-xl px-4 py-3 text-base outline-none"
+                    className="w-full rounded-xl px-4 py-3 text-base outline-none min-h-[48px]"
                     style={{ 
                       background: getCategoryBgColor(selectedCategory), 
                       border: `1.5px solid ${getCategoryColor(selectedCategory)}30`,
@@ -457,7 +1488,7 @@ function ManageModal({
                       fontWeight: "500"
                     }}
                   >
-                    {categories.map((cat) => {
+                    {sortedCategories.map((cat) => {
                       const catColor = getCategoryColor(cat);
                       return (
                         <option 
@@ -490,7 +1521,7 @@ function ManageModal({
                     value={itemName}
                     onChange={(e) => setItemName(e.target.value)}
                     placeholder="e.g., Mango Smoothie"
-                    className="w-full rounded-xl px-4 py-3 text-base outline-none"
+                    className="w-full rounded-xl px-4 py-3 text-base outline-none min-h-[48px]"
                     style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
                   />
                 </div>
@@ -504,7 +1535,7 @@ function ManageModal({
                     value={itemPrice}
                     onChange={(e) => setItemPrice(e.target.value)}
                     placeholder="e.g., 150"
-                    className="w-full rounded-xl px-4 py-3 text-base outline-none"
+                    className="w-full rounded-xl px-4 py-3 text-base outline-none min-h-[48px]"
                     style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
                   />
                   <p className="text-xs mt-1" style={{ color: "#a07850" }}>
@@ -514,13 +1545,12 @@ function ManageModal({
 
                 <button
                   onClick={handleAddItem}
-                  className="w-full py-3 rounded-xl font-semibold text-lg transition-all active:scale-95 touch-manipulation"
+                  className="w-full py-4 rounded-xl font-semibold text-lg transition-all active:scale-95 touch-manipulation min-h-[52px]"
                   style={{ background: selectedCategory ? getCategoryColor(selectedCategory) : "#3b2212", color: "white" }}
                 >
                   + Add Item to {selectedCategory || "Category"}
                 </button>
 
-                {/* Notification under Add Item button */}
                 {message && (
                   <div
                     className={`p-3 rounded-xl text-center transition-all duration-300 ${
@@ -538,11 +1568,11 @@ function ManageModal({
 
                 <div className="mt-6 pt-4 border-t" style={{ borderColor: "#e8ddd4" }}>
                   <h3 className="text-md font-semibold mb-3" style={{ color: "#3b2212" }}>
-                    Items in "{selectedCategory}"
+                    Items in "{selectedCategory}" (Alphabetical)
                   </h3>
                   <div className="space-y-2 max-h-64 overflow-y-auto">
-                    {itemsByCategory[selectedCategory]?.length > 0 ? (
-                      itemsByCategory[selectedCategory].map((item) => {
+                    {sortedItems.length > 0 ? (
+                      sortedItems.map((item) => {
                         const catColor = getCategoryColor(selectedCategory);
                         return (
                           <div
@@ -553,7 +1583,7 @@ function ManageModal({
                             <span className="text-sm font-medium" style={{ color: catColor }}>{item}</span>
                             <button
                               onClick={() => handleDeleteClick("item", item, selectedCategory)}
-                              className="px-3 py-1.5 rounded-lg text-sm font-semibold transition-all active:scale-95"
+                              className="px-4 py-2 rounded-lg text-sm font-semibold transition-all active:scale-95 touch-manipulation min-h-[40px]"
                               style={{ background: "#fee2e2", color: "#c0392b" }}
                             >
                               Delete
@@ -574,7 +1604,6 @@ function ManageModal({
         </div>
       </div>
 
-      {/* Add CSS animation */}
       <style jsx>{`
         @keyframes fadeInUp {
           from {
@@ -599,279 +1628,7 @@ function ManageModal({
   );
 }
 
-// Individual Discount Modal Component - BALANCED SIZE (BIGGER BUT FITS)
-function IndividualDiscountModal({ 
-  isOpen, 
-  onClose, 
-  onApply, 
-  itemName,
-  currentDiscount
-}: { 
-  isOpen: boolean; 
-  onClose: () => void; 
-  onApply: (discountType: "None" | "PWD" | "Senior", name: string, id: string) => void;
-  itemName: string;
-  currentDiscount: { type: "None" | "PWD" | "Senior"; name: string; id: string };
-}) {
-  const [discountType, setDiscountType] = useState<"PWD" | "Senior">(
-    currentDiscount.type !== "None" ? currentDiscount.type : "PWD"
-  );
-  const [activeInput, setActiveInput] = useState<"name" | "id" | null>(null);
-  const [tempName, setTempName] = useState(currentDiscount.name);
-  const [tempID, setTempID] = useState(currentDiscount.id);
-
-  const handleKeyPress = (key: string) => {
-    if (activeInput === "name") {
-      if (key === "BACKSPACE") {
-        setTempName(prev => prev.slice(0, -1));
-      } else if (key === "SPACE") {
-        setTempName(prev => prev + " ");
-      } else if (key === "CLEAR") {
-        setTempName("");
-      } else {
-        setTempName(prev => prev + key);
-      }
-    } else if (activeInput === "id") {
-      if (key === "BACKSPACE") {
-        setTempID(prev => prev.slice(0, -1));
-      } else if (key === "CLEAR") {
-        setTempID("");
-      } else if (/^[0-9]$/.test(key)) {
-        setTempID(prev => prev + key);
-      }
-    }
-  };
-
-  const handleApply = () => {
-    if (tempName.trim() && tempID.trim()) {
-      onApply(discountType, tempName, tempID);
-    }
-  };
-
-  const handleClose = () => {
-    // Reset temp values to current discount values when closing without applying
-    setTempName(currentDiscount.name);
-    setTempID(currentDiscount.id);
-    onClose();
-  };
-
-  if (!isOpen) return null;
-
-  // Remove Discount button should ONLY be enabled if a discount is ALREADY applied
-  const isRemoveButtonEnabled = currentDiscount.type !== "None";
-  
-  // Apply button should be enabled if name and ID are filled
-  const isApplyButtonEnabled = tempName.trim() && tempID.trim();
-
-  return (
-    <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-[70] p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl">
-        <div className="p-6">
-          {/* Header */}
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-2xl font-bold" style={{ color: "#3b2212" }}>
-              Apply Discount
-            </h2>
-            <button
-              onClick={handleClose}
-              className="w-9 h-9 rounded-full flex items-center justify-center text-xl"
-              style={{ background: "#f7f3ef", color: "#3b2212", border: "1px solid #e8ddd4" }}
-            >
-              ✕
-            </button>
-          </div>
-          
-          <p className="text-sm mb-5" style={{ color: "#a07850" }}>
-            {itemName.length > 45 ? itemName.substring(0, 42) + "..." : itemName} - 20% off
-          </p>
-
-          {/* Discount Type Buttons - PWD and Senior only */}
-          <div className="flex gap-3 mb-5">
-            {(["PWD", "Senior"] as const).map((type) => (
-              <button
-                key={type}
-                onClick={() => setDiscountType(type)}
-                className={`flex-1 py-2.5 rounded-xl font-semibold text-base transition-all active:scale-95 ${
-                  discountType === type
-                    ? "bg-[#3b2212] text-white"
-                    : "bg-[#faf7f4] text-[#3b2212] border border-[#e8ddd4]"
-                }`}
-              >
-                {type}
-              </button>
-            ))}
-          </div>
-
-          {/* Two Column Layout for Name and ID */}
-          <div className="grid grid-cols-2 gap-4 mb-5">
-            {/* Left Column - Customer Name */}
-            <div>
-              <label className="text-sm font-semibold block mb-1.5" style={{ color: "#3b2212" }}>
-                Customer Name <span style={{ color: "#c0392b" }}>*</span>
-              </label>
-              <div
-                onClick={() => setActiveInput("name")}
-                className={`w-full rounded-xl px-4 py-3 text-base transition-all cursor-pointer ${
-                  activeInput === "name" ? "ring-2 ring-[#3b2212]" : ""
-                }`}
-                style={{
-                  background: "#faf7f4",
-                  border: "1.5px solid #e8ddd4",
-                  color: "#3b2212",
-                  minHeight: "48px",
-                }}
-              >
-                {tempName || <span style={{ color: "#c0b090" }}>Tap to enter name...</span>}
-              </div>
-            </div>
-
-            {/* Right Column - ID Number */}
-            <div>
-              <label className="text-sm font-semibold block mb-1.5" style={{ color: "#3b2212" }}>
-                ID Number <span style={{ color: "#c0392b" }}>*</span>
-              </label>
-              <div
-                onClick={() => setActiveInput("id")}
-                className={`w-full rounded-xl px-4 py-3 text-base transition-all cursor-pointer font-mono ${
-                  activeInput === "id" ? "ring-2 ring-[#3b2212]" : ""
-                }`}
-                style={{
-                  background: "#faf7f4",
-                  border: "1.5px solid #e8ddd4",
-                  color: "#3b2212",
-                  minHeight: "48px",
-                }}
-              >
-                {tempID || <span style={{ color: "#c0b090" }}>Tap to enter ID number...</span>}
-              </div>
-            </div>
-          </div>
-
-          {/* Custom Keyboard */}
-          {activeInput && (
-            <div className="mt-4 pt-4 border-t" style={{ borderColor: "#e8ddd4" }}>
-              <div className="flex justify-between items-center mb-3">
-                <p className="text-sm font-semibold" style={{ color: "#3b2212" }}>
-                  Enter {activeInput === "name" ? "Customer Name" : "ID Number"}
-                </p>
-              </div>
-              
-              {activeInput === "name" ? (
-                <div className="space-y-2">
-                  <div className="grid grid-cols-10 gap-1.5">
-                    {["Q","W","E","R","T","Y","U","I","O","P"].map((key) => (
-                      <button key={key} onClick={() => handleKeyPress(key)}
-                        className="py-2 rounded-lg font-semibold text-base transition-all active:scale-95"
-                        style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
-                        {key}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="grid grid-cols-9 gap-1.5">
-                    {["A","S","D","F","G","H","J","K","L"].map((key) => (
-                      <button key={key} onClick={() => handleKeyPress(key)}
-                        className="py-2 rounded-lg font-semibold text-base transition-all active:scale-95"
-                        style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
-                        {key}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="grid grid-cols-9 gap-1.5">
-                    {["Z","X","C","V","B","N","M"].map((key) => (
-                      <button key={key} onClick={() => handleKeyPress(key)}
-                        className="py-2 rounded-lg font-semibold text-base transition-all active:scale-95"
-                        style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
-                        {key}
-                      </button>
-                    ))}
-                    <button onClick={() => handleKeyPress("SPACE")}
-                      className="py-2 rounded-lg font-semibold text-sm transition-all active:scale-95 col-span-2"
-                      style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
-                      SPACE
-                    </button>
-                    <button onClick={() => handleKeyPress("BACKSPACE")}
-                      className="py-2 rounded-lg font-semibold text-base transition-all active:scale-95"
-                      style={{ background: "#fee2e2", color: "#c0392b", border: "1px solid #f5c6c6" }}>
-                      ⌫
-                    </button>
-                    <button onClick={() => handleKeyPress("CLEAR")}
-                      className="py-2 rounded-lg font-semibold text-sm transition-all active:scale-95"
-                      style={{ background: "#fff0f0", color: "#c0392b", border: "1px solid #f5c6c6" }}>
-                      CLEAR
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  <div className="grid grid-cols-3 gap-2 mb-2">
-                    {["1","2","3","4","5","6","7","8","9"].map((num) => (
-                      <button key={num} onClick={() => handleKeyPress(num)}
-                        className="py-3.5 rounded-xl font-bold text-2xl transition-all active:scale-95"
-                        style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
-                        {num}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    <button onClick={() => handleKeyPress("CLEAR")}
-                      className="py-3.5 rounded-xl font-bold text-base transition-all active:scale-95"
-                      style={{ background: "#fff0f0", color: "#c0392b", border: "1.5px solid #f5c6c6" }}>
-                      CLEAR
-                    </button>
-                    <button onClick={() => handleKeyPress("0")}
-                      className="py-3.5 rounded-xl font-bold text-2xl transition-all active:scale-95"
-                      style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
-                      0
-                    </button>
-                    <button onClick={() => handleKeyPress("BACKSPACE")}
-                      className="py-3.5 rounded-xl font-bold text-2xl transition-all active:scale-95"
-                      style={{ background: "#fee2e2", color: "#c0392b", border: "1.5px solid #f5c6c6" }}>
-                      ⌫
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Action Buttons */}
-          <div className="flex gap-4 mt-6">
-            <button
-              disabled={!isRemoveButtonEnabled}
-              onClick={() => {
-                onApply("None", "", "");
-                onClose();
-              }}
-              className="flex-1 py-3 rounded-xl font-semibold text-base transition-all active:scale-95"
-              style={{
-                background: !isRemoveButtonEnabled ? "#e8e0d8" : "#f0e8e0",
-                color: !isRemoveButtonEnabled ? "#b09070" : "#3b2212",
-                cursor: !isRemoveButtonEnabled ? "not-allowed" : "pointer"
-              }}
-            >
-              Remove Discount
-            </button>
-            <button
-              disabled={!isApplyButtonEnabled}
-              onClick={handleApply}
-              className="flex-1 py-3 rounded-xl font-semibold text-base transition-all active:scale-95"
-              style={{
-                background: !isApplyButtonEnabled ? "#e8e0d8" : "#2d7a38",
-                color: !isApplyButtonEnabled ? "#b09070" : "white",
-                cursor: !isApplyButtonEnabled ? "not-allowed" : "pointer",
-              }}
-            >
-              Apply Discount
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
-
-
-}export default function POSLayout() {
+export default function POSLayout() {
   const { user, loading, logout } = useAuth();
   const router = useRouter();
 
@@ -912,7 +1669,7 @@ function IndividualDiscountModal({
 
   const [tabs, setTabs] = useState<Tab[]>([
     {
-      id: crypto.randomUUID(),
+      id: generateId(),
       name: "Customer 1",
       orderItems: [],
       bulkDiscount: "None",
@@ -938,34 +1695,55 @@ function IndividualDiscountModal({
   const [selectedProductCategory, setSelectedProductCategory] = useState("");
   const [checkoutMessage, setCheckoutMessage] = useState<string | null>(null);
   const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false);
-  const [confirmModal, setConfirmModal] = useState<{ open: boolean; method: "Cash" | "GCash" | null }>({ open: false, method: null });
+  const [confirmModal, setConfirmModal] = useState<{ open: boolean; method: "Cash" | "Non Cash" | null }>({ open: false, method: null });
   const [cashModal, setCashModal] = useState(false);
-  const [gcashRefModal, setGcashRefModal] = useState(false);
+  const [nonCashModal, setNonCashModal] = useState(false);
   const [isManageModalOpen, setIsManageModalOpen] = useState(false);
   const [discountModalItem, setDiscountModalItem] = useState<{ index: number; item: OrderItem } | null>(null);
+  
+  // New states for separate modals
+  const [pwdModalOpen, setPwdModalOpen] = useState(false);
+  const [seniorModalOpen, setSeniorModalOpen] = useState(false);
 
   const [dynamicProducts, setDynamicProducts] = useState<Record<string, string[]>>({});
   const [dynamicPrices, setDynamicPrices] = useState<Record<string, { M: number; L: number }>>({});
   const [dynamicItemColors, setDynamicItemColors] = useState<Record<string, { bg: string; hoverBg?: string; activeBg: string; text: string }>>({});
 
-  const [gcashName, setGcashName] = useState("");
-  const [gcashNumber, setGcashNumber] = useState("");
-  const [activeGcashInput, setActiveGcashInput] = useState<"name" | null>(null);
+  const [nonCashName, setNonCashName] = useState("");
+  const [nonCashNumber, setNonCashNumber] = useState("");
 
   const [amountTendered, setAmountTendered] = useState("");
   const [lastTransaction, setLastTransaction] = useState<{
-    number: string;
-    method: string;
-    total: number;
-    discountAmount: number;
-    amountTendered: string;
-    gcashSenderName?: string;
-    gcashNumber?: string;
-  } | null>(null);
+  number: string;
+  method: string;
+  total: number;
+  discountAmount: number;
+  amountTendered: string;
+  nonCashSenderName?: string;
+  nonCashNumber?: string;
+  items?: OrderItem[];
+  subtotal?: number;
+  discount?: {
+    type: string;
+    amount: number;
+    percentage?: number;
+  };
+} | null>(null);
   const [qtyInputs, setQtyInputs] = useState<Record<number, string>>({});
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
+  const [isLandscape, setIsLandscape] = useState(false);
+
+  // Handle orientation for tablet
+  useEffect(() => {
+    const checkOrientation = () => {
+      setIsLandscape(window.innerWidth > window.innerHeight);
+    };
+    checkOrientation();
+    window.addEventListener('resize', checkOrientation);
+    return () => window.removeEventListener('resize', checkOrientation);
+  }, []);
 
   const activeTab = tabs.find(tab => tab.id === activeTabId);
   const orderItems = activeTab?.orderItems || [];
@@ -984,19 +1762,20 @@ function IndividualDiscountModal({
   };
 
   const updateItemDiscount = (index: number, discountType: "None" | "PWD" | "Senior", name: string, id: string) => {
-    const newOrderItems = orderItems.map((item, i) =>
-      i === index ? { 
-        ...item, 
-        discountType, 
-        discountCustomerName: discountType !== "None" ? name : "",
-        discountCustomerID: discountType !== "None" ? id : ""
-      } : item
-    );
-    updateActiveTabOrderItems(newOrderItems);
-  };
+  const newOrderItems = orderItems.map((item, i) =>
+    i === index ? { 
+      ...item, 
+      discountType, 
+      discountCustomerName: discountType !== "None" ? name : "",
+      discountCustomerID: discountType !== "None" ? id : ""
+    } : item
+  );
+  updateActiveTabOrderItems(newOrderItems);
+  // DO NOT change bulkDiscount here!
+};
 
   const createNewTab = () => {
-    const newTabId = crypto.randomUUID();
+    const newTabId = generateId();
     const newTabNumber = tabs.length + 1;
     const newTab: Tab = {
       id: newTabId,
@@ -1083,42 +1862,45 @@ function IndividualDiscountModal({
     updateActiveTabOrderItems(newOrderItems);
   };
 
+  // Sort products alphabetically
   const products: Record<string, string[]> = {
-    Coffee: ["Americano", "Cappuccino", "Hazelnut", "Caramel Macchiato", "Mocha", "Spanish Latte", "Salted Caramel Latte", "Dirty Matcha", "Vanilla Latte"],
-    "Non Coffee": ["Choco", "Dark Choco", "Matcha latte", "Salted Caramel", "Caramel"],
-    Milktea: ["Wintermelon", "Okinawa", "Dark Choco", "Capuccino"],
-    "Yakult Mix": ["Wintermelon", "Blueberry", "Green Apple", "Lychee", "Strawberry"],
-    "Fruit Tea": ["Wintermelon", "Blueberry", "Green Apple", "Lychee", "Strawberry"],
-    "Hot Tea": ["English Breakfast", "Four Red Fruits", "Pure Camomile", "Green Tea & Lemon", "Lemon & Ginger"],
+    Coffee: sortAlphabetically(["Americano", "Cappuccino", "Hazelnut", "Caramel Macchiato", "Mocha", "Spanish Latte", "Salted Caramel Latte", "Dirty Matcha", "Vanilla Latte"]),
+    "Non Coffee": sortAlphabetically(["Choco", "Dark Choco", "Matcha latte", "Salted Caramel", "Caramel"]),
+    Milktea: sortAlphabetically(["Wintermelon", "Okinawa", "Dark Choco", "Capuccino"]),
+    "Yakult Mix": sortAlphabetically(["Wintermelon", "Blueberry", "Green Apple", "Lychee", "Strawberry"]),
+    "Fruit Tea": sortAlphabetically(["Wintermelon", "Blueberry", "Green Apple", "Lychee", "Strawberry"]),
+    "Hot Tea": sortAlphabetically(["English Breakfast", "Four Red Fruits", "Pure Camomile", "Green Tea & Lemon", "Lemon & Ginger"]),
     Frappe: [],
     "Food & Bites": [],
   };
 
   const allProducts: Record<string, string[]> = { ...products };
   
+  // Sort dynamic products alphabetically as well
   Object.keys(dynamicProducts).forEach(cat => {
     if (allProducts[cat]) {
-      allProducts[cat] = [...allProducts[cat], ...dynamicProducts[cat]];
+      allProducts[cat] = sortAlphabetically([...allProducts[cat], ...dynamicProducts[cat]]);
     } else {
-      allProducts[cat] = dynamicProducts[cat];
+      allProducts[cat] = sortAlphabetically(dynamicProducts[cat]);
     }
   });
   
+  // Sort subcategory products alphabetically
   const frappeProducts = {
-    "Coffee Based": ["Java Chip", "Coffee Jelly", "Dark Mocha", "Caramel"],
-    "Cream Based": ["Vanilla", "Cookies & Cream", "Strawberries & Cream", "Blue Berries & Cream", "Choco Chip", "Caramel", "Salted Caramel"],
-    "Tea Based": ["Wintermelon", "Okinawa", "Capuccino"],
+    "Coffee Based": sortAlphabetically(["Java Chip", "Coffee Jelly", "Dark Mocha", "Caramel"]),
+    "Cream Based": sortAlphabetically(["Vanilla", "Cookies & Cream", "Strawberries & Cream", "Blue Berries & Cream", "Choco Chip", "Caramel", "Salted Caramel"]),
+    "Tea Based": sortAlphabetically(["Wintermelon", "Okinawa", "Capuccino"]),
   };
 
   const foodProducts: Record<string, string[]> = {
-    "Grilled / Fried": ["Liempo", "Leg Quarters"],
-    "Sides & Snacks": ["French Fries", "Chicken Fingers", "Nachos", "Quesadillas"],
-    "Sandwiches & Burgers": ["Burger", "Cheese Burger", "Ham & Cheese"],
-    Breakfast: ["French Toast", "Waffle", "Pancake"],
-    "Desserts & Pastries": ["Cheesecake", "Empanada", "Muffin", "Cookies", "Popcorn", "Pancake (Dessert)"],
-    "Silog Meals": ["Tapa", "Bangus", "Spam", "Hotdog", "Ham", "Longganisa"],
-    Pasta: ["Spaghetti", "Tuna Pesto"],
-    Salads: ["Vegetable Salad"],
+    "Grilled / Fried": sortAlphabetically(["Liempo", "Leg Quarters"]),
+    "Sides & Snacks": sortAlphabetically(["French Fries", "Chicken Fingers", "Nachos", "Quesadillas"]),
+    "Sandwiches & Burgers": sortAlphabetically(["Burger", "Cheese Burger", "Ham & Cheese"]),
+    Breakfast: sortAlphabetically(["French Toast", "Waffle", "Pancake"]),
+    "Desserts & Pastries": sortAlphabetically(["Cheesecake", "Empanada", "Muffin", "Cookies", "Popcorn", "Pancake (Dessert)"]),
+    "Silog Meals": sortAlphabetically(["Tapa", "Bangus", "Spam", "Hotdog", "Ham", "Longganisa"]),
+    Pasta: sortAlphabetically(["Spaghetti", "Tuna Pesto"]),
+    Salads: sortAlphabetically(["Vegetable Salad"]),
   };
 
   const coffeePrices: Record<string, { M: number; L: number }> = {
@@ -1230,46 +2012,44 @@ function IndividualDiscountModal({
   const ADD_ON_PRICE = 30;
 
   const handleAddCategory = (categoryName: string, color: string) => {
-  setDynamicProducts(prev => ({
-    ...prev,
-    [categoryName]: []
-  }));
-  
-  // Create a lighter version for bg (20% opacity)
-  const bgColor = `${color}20`;
-  const hoverBgColor = `${color}30`;
-  
-  categoryColors[categoryName] = { 
-    bg: bgColor, 
-    hoverBg: hoverBgColor, 
-    activeBg: color, 
-    text: color 
+    setDynamicProducts(prev => ({
+      ...prev,
+      [categoryName]: []
+    }));
+    
+    const bgColor = `${color}20`;
+    const hoverBgColor = `${color}30`;
+    
+    categoryColors[categoryName] = { 
+      bg: bgColor, 
+      hoverBg: hoverBgColor, 
+      activeBg: color, 
+      text: color 
+    };
   };
-};
 
-const handleAddItem = (item: { name: string; price: number; category: string }) => {
-  setDynamicProducts(prev => ({
-    ...prev,
-    [item.category]: [...(prev[item.category] || []), item.name]
-  }));
-  
-  setDynamicPrices(prev => ({
-    ...prev,
-    [item.name]: { M: item.price, L: item.price + 20 }
-  }));
-  
-  // Get the category's color
-  const categoryColor = categoryColors[item.category]?.activeBg || "#3b2212";
-  
-  setDynamicItemColors(prev => ({
-    ...prev,
-    [item.name]: { 
-      bg: `${categoryColor}20`, 
-      activeBg: categoryColor,
-      text: categoryColor 
-    }
-  }));
-};
+  const handleAddItem = (item: { name: string; price: number; category: string }) => {
+    setDynamicProducts(prev => ({
+      ...prev,
+      [item.category]: sortAlphabetically([...(prev[item.category] || []), item.name])
+    }));
+    
+    setDynamicPrices(prev => ({
+      ...prev,
+      [item.name]: { M: item.price, L: item.price + 20 }
+    }));
+    
+    const categoryColor = categoryColors[item.category]?.activeBg || "#3b2212";
+    
+    setDynamicItemColors(prev => ({
+      ...prev,
+      [item.name]: { 
+        bg: `${categoryColor}20`, 
+        activeBg: categoryColor,
+        text: categoryColor 
+      }
+    }));
+  };
 
   const handleDeleteCategory = (categoryName: string) => {
     const defaultCategories = ["Coffee", "Non Coffee", "Milktea", "Yakult Mix", "Fruit Tea", "Hot Tea", "Frappe", "Food & Bites"];
@@ -1371,7 +2151,8 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
   const allFoodItems = Object.values(foodProducts).flat();
   const quesadillasVariants = ["Beef", "Cheese"];
 
-  const allProductEntries: { name: string; category: string }[] = [
+  // Sort all product entries alphabetically for search
+  const allProductEntries: { name: string; category: string }[] = sortAlphabetically([
     ...Object.entries(allProducts).flatMap(([cat, items]) =>
       (items as string[]).map(name => ({ name, category: cat }))
     ),
@@ -1381,7 +2162,7 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
     ...Object.entries(foodProducts).flatMap(([sub, items]) =>
       items.map(name => ({ name, category: `Food & Bites · ${sub}` }))
     ),
-  ];
+  ].map(entry => ({ ...entry, name: entry.name, category: entry.category })));
 
   const searchResults = searchQuery.trim().length > 0
     ? allProductEntries.filter(entry =>
@@ -1408,8 +2189,17 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
     ? !checkIsFood(selectedProduct || "")
     : categoriesWithAddOns.includes(activeCategory);
 
+  // Sort categories alphabetically for display
+  const sortedAllCategories = sortAlphabetically(Object.keys(allProducts));
+
+  // Sort food subcategories alphabetically
+  const sortedFoodSubCategories = sortAlphabetically(["All", ...Object.keys(foodProducts)]);
+
+  // Sort frappe types alphabetically
+  const sortedFrappeTypes = sortAlphabetically(Object.keys(frappeProducts));
+
   // ---------------------------------------------------------
-  // RESERVED STOCK & STOCK CHECKER PARA SA UI TEXT
+  // RESERVED STOCK & STOCK CHECKER
   // ---------------------------------------------------------
   const alreadyInCartReserved: Record<string, number> = {};
   tabs.forEach(tab => {
@@ -1462,7 +2252,7 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
   };
 
   // ---------------------------------------------------------
-  // REAL-TIME OOS CHECKER PARA SA LOOB NG MODAL
+  // REAL-TIME OOS CHECKER
   // ---------------------------------------------------------
   const currentMissingIngredients: string[] = [];
   if (selectedProduct) {
@@ -1497,69 +2287,68 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
   }
 
   const getModalPrice = (): number => {
-    if (!selectedProduct) return 0;
-    if (isFood) {
-      if (selectedProduct === "Quesadillas") {
-        const variantKey = selectedVariant ? `Quesadillas (${selectedVariant})` : "Quesadillas";
-        return (foodPrices[variantKey] ?? 0) + selectedAddOns.length * ADD_ON_PRICE;
-      }
-      return (foodPrices[selectedProduct] ?? 0) + selectedAddOns.length * ADD_ON_PRICE;
+  if (!selectedProduct) return 0;
+  if (isFood) {
+    if (selectedProduct === "Quesadillas") {
+      const variantKey = selectedVariant ? `Quesadillas (${selectedVariant})` : "Quesadillas";
+      return (foodPrices[variantKey] ?? 0) + (selectedAddOns.length * ADD_ON_PRICE);
     }
-    const cat = isSearching ? selectedProductCategory.split(" · ")[0] : activeCategory;
-    const fType = isSearching ? getFrappeType(selectedProduct) : activeFrappeType;
-    const base = getDrinkPrice(selectedProduct, sizeOption, cat, fType);
-    return base + selectedAddOns.length * ADD_ON_PRICE;
-  };
+    return (foodPrices[selectedProduct] ?? 0) + (selectedAddOns.length * ADD_ON_PRICE);
+  }
+  const cat = isSearching ? selectedProductCategory.split(" · ")[0] : activeCategory;
+  const fType = isSearching ? getFrappeType(selectedProduct) : activeFrappeType;
+  const base = getDrinkPrice(selectedProduct, sizeOption, cat, fType);
+  return base + (selectedAddOns.length * ADD_ON_PRICE);  // ← Add this back
+};
 
   const modalPrice = getModalPrice();
 
   const handleAddToOrder = () => {
-    if (!selectedProduct) return;
-    if (selectedProduct === "Quesadillas" && !selectedVariant) return;
-    if (currentMissingIngredients.length > 0) return;
+  if (!selectedProduct) return;
+  if (selectedProduct === "Quesadillas" && !selectedVariant) return;
+  if (currentMissingIngredients.length > 0) return;
 
-    let price: number;
-    let displayName = selectedProduct;
+  let basePrice: number;
+  let displayName = selectedProduct;
 
-    if (isFood) {
-      if (selectedProduct === "Quesadillas" && selectedVariant) {
-        displayName = `Quesadillas (${selectedVariant})`;
-        price = (foodPrices[displayName] ?? 0) + selectedAddOns.length * ADD_ON_PRICE;
-      } else {
-        price = (foodPrices[selectedProduct] ?? 0) + selectedAddOns.length * ADD_ON_PRICE;
-      }
+  if (isFood) {
+    if (selectedProduct === "Quesadillas" && selectedVariant) {
+      displayName = `Quesadillas (${selectedVariant})`;
+      basePrice = (foodPrices[displayName] ?? 0);
     } else {
-      const cat = isSearching ? selectedProductCategory.split(" · ")[0] : activeCategory;
-      const fType = isSearching ? getFrappeType(selectedProduct) : activeFrappeType;
-      const base = getDrinkPrice(selectedProduct, sizeOption, cat, fType);
-      price = base + selectedAddOns.length * ADD_ON_PRICE;
+      basePrice = (foodPrices[selectedProduct] ?? 0);
     }
+  } else {
+    const cat = isSearching ? selectedProductCategory.split(" · ")[0] : activeCategory;
+    const fType = isSearching ? getFrappeType(selectedProduct) : activeFrappeType;
+    basePrice = getDrinkPrice(selectedProduct, sizeOption, cat, fType);
+  }
 
-    const newItem: OrderItem = {
-      name: displayName,
-      category: selectedProductCategory,
-      temperature: isFood ? "" : tempOption,
-      size: isFood ? "" : sizeOption,
-      sugar: isFood ? "" : sugarOption,
-      quantity: 1,
-      price,
-      addOns: selectedAddOns.length > 0 ? selectedAddOns : undefined,
-      discountType: "None",
-      discountCustomerName: "",
-      discountCustomerID: "",
-    };
-
-    updateActiveTabOrderItems([...orderItems, newItem]);
-    setSelectedProduct(null);
-    setTempOption("Hot");
-    setSizeOption("Medium");
-    setSugarOption("100%");
-    setSelectedAddOns([]);
-    setSelectedVariant(null);
-    setSelectedProductIsFood(false);
-    setSelectedProductCategory("");
-    setModalError(null);
+  const newItem: OrderItem = {
+    name: displayName,
+    category: selectedProductCategory,
+    temperature: isFood ? "" : tempOption,
+    size: isFood ? "" : sizeOption,
+    sugar: isFood ? "" : sugarOption,
+    quantity: 1,
+    price: basePrice,
+    addOns: selectedAddOns.length > 0 ? selectedAddOns : undefined,
+    discountType: "None",
+    discountCustomerName: "",
+    discountCustomerID: "",
   };
+
+  updateActiveTabOrderItems([...orderItems, newItem]);
+  setSelectedProduct(null);
+  setTempOption("Hot");
+  setSizeOption("Medium");
+  setSugarOption("100%");
+  setSelectedAddOns([]);
+  setSelectedVariant(null);
+  setSelectedProductIsFood(false);
+  setSelectedProductCategory("");
+  setModalError(null);
+};
 
   const handleToggleAddOn = (addOn: string) => {
     setSelectedAddOns(prev => prev.includes(addOn) ? prev.filter(i => i !== addOn) : [...prev, addOn]);
@@ -1567,21 +2356,21 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
   const handleClearAddOns = () => setSelectedAddOns([]);
 
   // Calculate subtotal with individual item discounts
-  const calculateSubtotal = () => {
-    let total = 0;
-    orderItems.forEach(item => {
-      let itemTotal = item.price * item.quantity;
-      if (item.discountType === "PWD" || item.discountType === "Senior") {
-        itemTotal = itemTotal * 0.8; // 20% discount
-      }
-      total += itemTotal;
-    });
-    return total;
-  };
+ const calculateSubtotal = () => {
+  let total = 0;
+  orderItems.forEach(item => {
+    const addOnsTotal = (item.addOns?.length || 0) * ADD_ON_PRICE;
+    let itemTotal = (item.price + addOnsTotal) * item.quantity;
+    if (item.discountType === "PWD" || item.discountType === "Senior") {
+      itemTotal = itemTotal * 0.8;
+    }
+    total += itemTotal;
+  });
+  return total;
+};
 
   const subtotal = calculateSubtotal();
 
-  // Apply bulk discount (5% or 10% on total after individual discounts)
   let discountAmount = 0;
   let total = subtotal;
 
@@ -1603,8 +2392,7 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
     return `TXN-${date}-${seq}`;
   };
 
-  // Updated processCheckout to include individual discounts
-  const processCheckout = async (paymentMethod: "Cash" | "GCash", senderNumber?: string, senderName?: string) => {
+  const processCheckout = async (paymentMethod: "Cash" | "Non Cash", senderNumber?: string, senderName?: string) => {
     if (orderItems.length === 0) {
       setCheckoutMessage("No items in the cart to checkout.");
       return;
@@ -1616,29 +2404,35 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
       const transactionNumber = generateTransactionNumber();
 
       const sanitizedItems = orderItems.map(item => {
-        const cleaned: Record<string, unknown> = {
-          name: item.name,
-          category: item.category ?? "",
-          temperature: item.temperature ?? "",
-          size: item.size ?? "",
-          sugar: item.sugar ?? "",
-          quantity: item.quantity,
-          price: item.price,
-          discountedPrice: item.discountType && item.discountType !== "None" ? item.price * 0.8 : item.price,
-        };
-        if (Array.isArray(item.addOns) && item.addOns.length > 0) cleaned.addOns = item.addOns;
-        if (typeof item.variant !== "undefined") cleaned.variant = item.variant;
-        if (item.discountType && item.discountType !== "None") {
-          cleaned.discount = {
-            type: item.discountType,
-            rate: 0.20,
-            amount: item.price - (item.price * 0.8),
-            customerName: item.discountCustomerName,
-            customerID: item.discountCustomerID
-          };
-        }
-        return cleaned;
-      });
+  const cleaned: Record<string, unknown> = {
+    name: item.name,
+    category: item.category ?? "",
+    temperature: item.temperature ?? "",
+    size: item.size ?? "",
+    sugar: item.sugar ?? "",
+    quantity: item.quantity,
+    price: item.price,
+  };
+  
+  if (Array.isArray(item.addOns) && item.addOns.length > 0) cleaned.addOns = item.addOns;
+  if (typeof item.variant !== "undefined") cleaned.variant = item.variant;
+  
+  // IMPORTANT: Save discountType directly on the item
+  if (item.discountType && item.discountType !== "None") {
+    cleaned.discountType = item.discountType;  // ← ADD THIS
+    cleaned.discountCustomerName = item.discountCustomerName;
+    cleaned.discountCustomerID = item.discountCustomerID;
+    cleaned.discount = {
+      type: item.discountType,
+      rate: 0.20,
+      amount: (item.price + (item.addOns?.length || 0) * ADD_ON_PRICE) * item.quantity * 0.2,
+      customerName: item.discountCustomerName,
+      customerID: item.discountCustomerID
+    };
+  }
+  
+  return cleaned;
+});
 
       const orderPayload = {
         transactionNumber,
@@ -1647,9 +2441,9 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
         discount: bulkDiscount !== "None" ? { type: bulkDiscount, rate: bulkDiscount === "5%" ? 0.05 : 0.10, amount: discountAmount } : null,
         totalAmount: total,
         paymentMethod,
-        gcashSenderName: paymentMethod === "GCash" ? (senderName ?? null) : null,
-        gcashNumber: paymentMethod === "GCash" ? (senderNumber ?? null) : null,
-        cashierName: user?.displayName ?? "Unknown",
+        nonCashSenderName: paymentMethod === "Non Cash" ? (senderName ?? null) : null,
+        nonCashNumber: paymentMethod === "Non Cash" ? (senderNumber ?? null) : null,
+        baristaName: user?.displayName ?? "Unknown",
         createdAt: serverTimestamp(),
       };
 
@@ -1760,23 +2554,28 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
       }
 
       setLastTransaction({
-        number: transactionNumber,
-        method: paymentMethod,
-        total,
-        discountAmount,
-        amountTendered,
-        gcashSenderName: paymentMethod === "GCash" ? senderName : undefined,
-        gcashNumber: paymentMethod === "GCash" ? senderNumber : undefined,
-      });
+  number: transactionNumber,
+  method: paymentMethod,
+  total,
+  discountAmount,
+  amountTendered: paymentMethod === "Cash" ? amountTendered : "",
+  nonCashSenderName: paymentMethod === "Non Cash" ? senderName : undefined,
+  nonCashNumber: paymentMethod === "Non Cash" ? senderNumber : undefined,
+  items: orderItems,
+  subtotal: subtotal,
+  discount: bulkDiscount !== "None" ? {
+    type: bulkDiscount,
+    amount: discountAmount
+  } : undefined
+});
       
       updateActiveTabOrderItems([]);
       updateActiveTabBulkDiscount("None");
       setAmountTendered("");
       setCashModal(false);
-      setGcashRefModal(false);
-      setGcashName("");
-      setGcashNumber("");
-      setActiveGcashInput(null);
+      setNonCashModal(false);
+      setNonCashName("");
+      setNonCashNumber("");
       setCheckoutMessage(null);
       setIsSuccessModalOpen(true);
     } catch (error: any) {
@@ -1786,7 +2585,7 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
         setCheckoutMessage(`Checkout failed. Not enough stock:\n• ${missingItems}`);
       } else if (error.message?.includes("DB_MISSING")) {
         const missingItems = error.message.split("|")[1];
-        setCheckoutMessage(`Database mismatch! Pakicheck spelling sa inventory, nawawala ang:\n• ${missingItems}`);
+        setCheckoutMessage(`Database mismatch! Please check spelling in inventory, missing:\n• ${missingItems}`);
       } else {
         setCheckoutMessage("Checkout failed. Please check your connection or try again.");
       }
@@ -1818,8 +2617,6 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
     return categoryColors[topLevel] ?? { bg: "#f5f5f5", hoverBg: "#eeeeee", activeBg: "#3b2212", text: "#6b4c30" };
   };
 
-  const allCategories = Object.keys(allProducts);
-
   const baseCategory = selectedProductCategory ? selectedProductCategory.split(" · ")[0] : "";
   const allowedAddOns = CATEGORY_ADD_ONS[baseCategory] || [];
 
@@ -1830,7 +2627,7 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
     <div className="flex h-full w-full overflow-hidden" style={{ background: "#ede8e3" }}>
       {/* Left Panel - Product Selection with Tabs */}
       <div className="flex-1 flex flex-col h-full min-w-0" style={{ background: "#ede8e3" }}>
-        {/* Tab Bar - FIXED at top, never scrolls away */}
+        {/* Tab Bar - FIXED at top */}
         <div className="flex-shrink-0 px-5 pt-5 pb-2">
           <div className="flex justify-between items-center mb-2">
             <div 
@@ -1878,13 +2675,13 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
                       )}
                       <button
                         onClick={(e) => startEditingTabName(tab.id, tab.name, e)}
-                        className="opacity-0 group-hover:opacity-100 text-xs px-1 hover:bg-black/10 rounded transition-all shrink-0"
+                        className="opacity-0 group-hover:opacity-100 text-xs px-1 hover:bg-black/10 rounded transition-all shrink-0 min-h-[30px]"
                       >
                         ✎
                       </button>
                       <button
                         onClick={(e) => closeTab(tab.id, e)}
-                        className="opacity-0 group-hover:opacity-100 text-xs px-1 hover:bg-black/10 rounded transition-all shrink-0"
+                        className="opacity-0 group-hover:opacity-100 text-xs px-1 hover:bg-black/10 rounded transition-all shrink-0 min-h-[30px]"
                       >
                         ✕
                       </button>
@@ -1893,10 +2690,9 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
                 </div>
               ))}
               
-              {/* New Tab Button */}
               <button
                 onClick={createNewTab}
-                className="shrink-0 px-4 py-2 rounded-lg text-sm font-medium transition-all hover:bg-[#e8e0d8] border border-[#e8ddd4] bg-white whitespace-nowrap"
+                className="shrink-0 px-4 py-2 rounded-lg text-sm font-medium transition-all hover:bg-[#e8e0d8] border border-[#e8ddd4] bg-white whitespace-nowrap min-h-[44px]"
                 style={{ color: "#5a3d28" }}
                 title="New customer tab"
               >
@@ -1904,10 +2700,9 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
               </button>
             </div>
             
-            {/* Manage Menu Button */}
             <button
               onClick={() => setIsManageModalOpen(true)}
-              className="shrink-0 ml-3 px-4 py-2 rounded-lg text-sm font-medium transition-all hover:bg-[#e8e0d8] border border-[#e8ddd4] bg-white whitespace-nowrap flex items-center gap-2"
+              className="shrink-0 ml-3 px-4 py-2 rounded-lg text-sm font-medium transition-all hover:bg-[#e8e0d8] border border-[#e8ddd4] bg-white whitespace-nowrap flex items-center gap-2 min-h-[44px]"
               style={{ color: "#5a3d28" }}
               title="Manage Categories & Items"
             >
@@ -1931,14 +2726,14 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
               placeholder="Search products..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full rounded-xl px-4 py-4 pl-11 text-base outline-none"
+              className="w-full rounded-xl px-4 py-4 pl-11 text-base outline-none min-h-[48px]"
               style={{ background: "white", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
             />
             {searchQuery && (
               <button
                 onClick={() => setSearchQuery("")}
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-base w-8 h-8 flex items-center justify-center rounded-full"
-                style={{ color: "#a07850" }}>
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-base w-10 h-10 flex items-center justify-center rounded-full active:scale-95 touch-manipulation"
+                style={{ color: "#a07850", minHeight: "40px" }}>
                 ✕
               </button>
             )}
@@ -1963,8 +2758,8 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
                         setSelectedProductIsFood(checkIsFood(entry.name));
                         setSelectedProductCategory(entry.category);
                       }}
-                      className="rounded-2xl p-5 cursor-pointer transition-all active:scale-95 touch-manipulation flex flex-col items-center justify-center gap-1"
-                      style={{ background: colors.bg, border: `1.5px solid ${colors.hoverBg}`, minHeight: "100px" }}
+                      className="rounded-2xl p-5 cursor-pointer transition-all active:scale-95 touch-manipulation flex flex-col items-center justify-center gap-1 min-h-[100px]"
+                      style={{ background: colors.bg, border: `1.5px solid ${colors.hoverBg}` }}
                     >
                       <p className="font-normal text-center" style={{ color: colors.activeBg, fontSize: "18px" }}>{entry.name}</p>
                       {stockStatus === "Not Available" && <p className="text-[11px] font-bold mt-0.5" style={{ color: "#c0392b" }}>(Not Available)</p>}
@@ -1979,13 +2774,13 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
           ) : (
             <>
               <div className="flex gap-2 mb-4 flex-wrap">
-                {Object.keys(allProducts).map((cat) => {
+                {sortedAllCategories.map((cat) => {
                   const colors = categoryColors[cat] || { bg: "#f5f5f5", hoverBg: "#eeeeee", activeBg: "#3b2212", text: "#6b4c30" };
                   return (
                     <button
                       key={cat}
                       onClick={() => { setActiveCategory(cat); setActiveFrappeType(null); setActiveFoodSubCategory("All"); }}
-                      className="px-5 py-3 rounded-xl font-semibold transition-all active:scale-95 touch-manipulation"
+                      className="px-5 py-3 rounded-xl font-semibold transition-all active:scale-95 touch-manipulation min-h-[48px]"
                       style={{
                         fontSize: "18px",
                         background: activeCategory === cat ? colors.activeBg : colors.bg,
@@ -2002,13 +2797,13 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
 
               {activeCategory === "Frappe" && (
                 <div className="flex gap-2 mb-5 p-3 rounded-xl flex-wrap" style={{ background: "#ede4db" }}>
-                  {Object.keys(frappeProducts).map((type) => {
+                  {sortedFrappeTypes.map((type) => {
                     const fc = frappeSubColors[type] ?? { bg: "#faf7f4", hoverBg: "#f0e8e0", activeBg: "#3b2212", text: "#3b2212" };
                     const isActive = activeFrappeType === type;
                     return (
                       <button key={type}
                         onClick={() => setActiveFrappeType(type)}
-                        className="px-5 py-3 rounded-lg font-semibold transition-all active:scale-95 touch-manipulation"
+                        className="px-5 py-3 rounded-lg font-semibold transition-all active:scale-95 touch-manipulation min-h-[48px]"
                         style={{
                           fontSize: "16px",
                           background: isActive ? fc.activeBg : fc.bg,
@@ -2025,16 +2820,10 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
 
               {activeCategory === "Food & Bites" && (
                 <div className="flex gap-2 mb-5 p-3 rounded-xl flex-wrap" style={{ background: "#ede4db" }}>
-                  <button
-                    onClick={() => setActiveFoodSubCategory("All")}
-                    className="px-5 py-3 rounded-lg font-semibold transition-all active:scale-95 touch-manipulation"
-                    style={{ fontSize: "16px", ...(activeFoodSubCategory === "All" ? activeOptStyle : inactiveOptStyle) }}>
-                    All
-                  </button>
-                  {Object.keys(foodProducts).map((sub) => (
+                  {sortedFoodSubCategories.map((sub) => (
                     <button key={sub}
                       onClick={() => setActiveFoodSubCategory(sub)}
-                      className="px-5 py-3 rounded-lg font-semibold transition-all active:scale-95 touch-manipulation"
+                      className="px-5 py-3 rounded-lg font-semibold transition-all active:scale-95 touch-manipulation min-h-[48px]"
                       style={{ fontSize: "16px", ...(activeFoodSubCategory === sub ? activeOptStyle : inactiveOptStyle) }}>
                       {sub}
                     </button>
@@ -2056,8 +2845,8 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
                         setSelectedProductIsFood(false);
                         setSelectedProductCategory(activeCategory);
                       }}
-                        className="rounded-2xl p-5 cursor-pointer transition-all active:scale-95 touch-manipulation flex flex-col items-center justify-center gap-1"
-                        style={{ background: cardColors.bg, border: `1.5px solid ${cardColors.hoverBg || colors.hoverBg}`, minHeight: "100px" }}>
+                        className="rounded-2xl p-5 cursor-pointer transition-all active:scale-95 touch-manipulation flex flex-col items-center justify-center gap-1 min-h-[100px]"
+                        style={{ background: cardColors.bg, border: `1.5px solid ${cardColors.hoverBg || colors.hoverBg}` }}>
                         <p className="font-normal text-center" style={{ color: cardColors.activeBg, fontSize: "18px" }}>{item}</p>
                         {stockStatus === "Not Available" && <p className="text-[11px] font-bold mt-0.5" style={{ color: "#c0392b" }}>(Not Available)</p>}
                         {stockStatus === "Low Stock" && <p className="text-[11px] font-bold mt-0.5" style={{ color: "#d35400" }}>(Low Stock)</p>}
@@ -2077,8 +2866,8 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
                         setSelectedProductIsFood(false);
                         setSelectedProductCategory(`Frappe · ${activeFrappeType}`);
                       }}
-                        className="rounded-2xl p-5 cursor-pointer transition-all active:scale-95 touch-manipulation flex flex-col items-center justify-center gap-1"
-                        style={{ background: colors.bg, border: `1.5px solid ${colors.hoverBg}`, minHeight: "100px" }}>
+                        className="rounded-2xl p-5 cursor-pointer transition-all active:scale-95 touch-manipulation flex flex-col items-center justify-center gap-1 min-h-[100px]"
+                        style={{ background: colors.bg, border: `1.5px solid ${colors.hoverBg}` }}>
                         <p className="font-normal text-center" style={{ color: colors.activeBg, fontSize: "18px" }}>{item}</p>
                         {stockStatus === "Not Available" && <p className="text-[11px] font-bold mt-0.5" style={{ color: "#c0392b" }}>(Not Available)</p>}
                         {stockStatus === "Low Stock" && <p className="text-[11px] font-bold mt-0.5" style={{ color: "#d35400" }}>(Low Stock)</p>}
@@ -2104,8 +2893,8 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
                           : activeFoodSubCategory;
                         setSelectedProductCategory(`Food & Bites · ${sub}`);
                       }}
-                        className="rounded-2xl p-5 cursor-pointer transition-all active:scale-95 touch-manipulation flex flex-col items-center justify-center gap-1"
-                        style={{ background: colors.bg, border: `1.5px solid ${colors.hoverBg}`, minHeight: "100px" }}>
+                        className="rounded-2xl p-5 cursor-pointer transition-all active:scale-95 touch-manipulation flex flex-col items-center justify-center gap-1 min-h-[100px]"
+                        style={{ background: colors.bg, border: `1.5px solid ${colors.hoverBg}` }}>
                         <p className="font-normal text-center" style={{ color: colors.activeBg, fontSize: "18px" }}>{item}</p>
                         {stockStatus === "Not Available" && <p className="text-[11px] font-bold mt-0.5" style={{ color: "#c0392b" }}>(Not Available)</p>}
                         {stockStatus === "Low Stock" && <p className="text-[11px] font-bold mt-0.5" style={{ color: "#d35400" }}>(Low Stock)</p>}
@@ -2141,13 +2930,15 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
           ) : (
             <div className="flex-1 overflow-y-auto space-y-3 pr-1 min-h-0" style={{ WebkitOverflowScrolling: "touch" }}>
               {orderItems.map((item, index) => {
-                const itemTotal = item.price * item.quantity;
-                const discountedTotal = (item.discountType === "PWD" || item.discountType === "Senior") 
-                  ? itemTotal * 0.8 
-                  : itemTotal;
-                const discountApplied = item.discountType !== "None";
+  const addOnsTotal = (item.addOns?.length || 0) * ADD_ON_PRICE;
+  const itemTotal = (item.price + addOnsTotal) * item.quantity;
+  const discountedTotal = (item.discountType === "PWD" || item.discountType === "Senior") 
+    ? itemTotal * 0.8 
+    : itemTotal;
+  const discountApplied = item.discountType !== "None";  // ← ADD THIS LINE
+  
+  return (
                 
-                return (
                   <div key={index} className="p-3 relative" style={{ borderBottom: "0.5px solid #e8ddd4" }}>
                     <div className="flex justify-between items-start">
                       <div className="flex-1">
@@ -2182,7 +2973,7 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
                         </div>
                         <div className="flex items-center gap-2 mt-1">
                           <button onClick={() => handleDecreaseQty(index)}
-                            className="w-10 h-10 rounded-full flex items-center justify-center font-bold active:scale-95 touch-manipulation"
+                            className="w-12 h-12 rounded-full flex items-center justify-center font-bold active:scale-95 touch-manipulation min-h-[44px]"
                             style={{ background: "#f0e8e0", color: "#3b2212", fontSize: "20px" }}>−</button>
                           <input
                             type="text"
@@ -2206,24 +2997,24 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
                               }
                               setQtyInputs(prev => { const next = { ...prev }; delete next[index]; return next; });
                             }}
-                            className="text-lg font-semibold text-center outline-none rounded-lg"
-                            style={{ width: "55px", color: "#3b2212", background: "#faf7f4", border: "1.5px solid #e8ddd4", padding: "8px 4px" }}
+                            className="text-lg font-semibold text-center outline-none rounded-lg min-h-[44px]"
+                            style={{ width: "65px", color: "#3b2212", background: "#faf7f4", border: "1.5px solid #e8ddd4", padding: "8px 4px" }}
                           />
                           <button onClick={() => handleIncreaseQty(index)}
-                            className="w-10 h-10 rounded-full flex items-center justify-center font-bold active:scale-95 touch-manipulation"
+                            className="w-12 h-12 rounded-full flex items-center justify-center font-bold active:scale-95 touch-manipulation min-h-[44px]"
                             style={{ background: "#3b2212", color: "white", fontSize: "20px" }}>+</button>
                         </div>
                         <div className="flex gap-2">
                           <button
                             onClick={() => setDiscountModalItem({ index, item })}
-                            className={`text-sm rounded-lg px-3 py-1.5 font-semibold transition-all active:scale-95 touch-manipulation ${
+                            className={`text-sm rounded-lg px-4 py-2 font-semibold transition-all active:scale-95 touch-manipulation min-h-[40px] ${
                               discountApplied ? "bg-[#2d7a38] text-white" : "bg-[#f0e8e0] text-[#3b2212]"
                             }`}
                           >
                             {discountApplied ? "✎ Discount" : "Add Discount"}
                           </button>
                           <button onClick={() => handleRemoveItem(index)}
-                            className="text-sm rounded-full w-8 h-8 flex items-center justify-center active:scale-95 touch-manipulation"
+                            className="text-sm rounded-full w-10 h-10 flex items-center justify-center active:scale-95 touch-manipulation min-h-[40px]"
                             style={{ background: "#fee2e2", color: "#c0392b" }}>✕</button>
                         </div>
                       </div>
@@ -2236,21 +3027,117 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
 
           {orderItems.length > 0 && (
             <div className="py-4 space-y-2 mt-2" style={{ borderTop: "1.5px solid #e8ddd4" }}>
-              <div className="mb-1">
-                <p className="text-xs mb-1.5" style={{ color: "#a07850" }}>Bulk Order Discount (on total after item discounts)</p>
-                <div className="flex gap-2">
-                  {(["None", "5%", "10%"] as const).map((d) => (
-                    <button key={d}
-                      onClick={() => updateActiveTabBulkDiscount(d)}
-                      className="flex-1 py-2 rounded-lg text-sm font-semibold transition-all active:scale-95 touch-manipulation"
-                      style={bulkDiscount === d
-                        ? { background: "#3b2212", color: "white" }
-                        : { background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
-                      {d === "None" ? "None" : `${d} OFF`}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              
+             <div className="mb-1">
+  <p className="text-xs mb-2" style={{ color: "#a07850" }}>Discount Options (tap to apply, tap again to remove)</p>
+  <div className="flex gap-2">
+    <button
+      onClick={() => {
+        if (bulkDiscount === "5%") {
+          updateActiveTabBulkDiscount("None");
+        } else {
+          updateActiveTabBulkDiscount("5%");
+        }
+      }}
+      className="flex-1 py-3 rounded-xl font-semibold transition-all active:scale-95 touch-manipulation min-h-[48px] text-sm"
+      style={bulkDiscount === "5%"
+        ? { background: "#3b2212", color: "white", boxShadow: "0 2px 4px rgba(0,0,0,0.1)" }
+        : { background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
+      5%
+    </button>
+    <button
+      onClick={() => {
+        if (bulkDiscount === "10%") {
+          updateActiveTabBulkDiscount("None");
+        } else {
+          updateActiveTabBulkDiscount("10%");
+        }
+      }}
+      className="flex-1 py-3 rounded-xl font-semibold transition-all active:scale-95 touch-manipulation min-h-[48px] text-sm"
+      style={bulkDiscount === "10%"
+        ? { background: "#3b2212", color: "white", boxShadow: "0 2px 4px rgba(0,0,0,0.1)" }
+        : { background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
+      10%
+    </button>
+    <button
+  onClick={() => {
+    if (orderItems.length === 0) return;
+    if (bulkDiscount === "PWD") {
+      updateActiveTabBulkDiscount("None");
+      const newOrderItems = orderItems.map(item => ({
+        ...item,
+        discountType: "None",
+        discountCustomerName: "",
+        discountCustomerID: ""
+      }));
+      updateActiveTabOrderItems(newOrderItems);
+    } else {
+      if (bulkDiscount !== "None") {
+        updateActiveTabBulkDiscount("None");
+        const newOrderItems = orderItems.map(item => ({
+          ...item,
+          discountType: "None",
+          discountCustomerName: "",
+          discountCustomerID: ""
+        }));
+        updateActiveTabOrderItems(newOrderItems);
+      }
+      setPwdModalOpen(true);
+    }
+  }}
+  className="flex-1 py-3 rounded-xl font-semibold transition-all active:scale-95 touch-manipulation min-h-[48px] text-sm"
+  style={{
+    background: bulkDiscount === "PWD" ? "#2d7a38" : "#faf7f4",
+    color: bulkDiscount === "PWD" ? "white" : "#3b2212",
+    border: "1.5px solid #e8ddd4"
+  }}
+>
+  PWD
+</button>
+    
+    <button
+  onClick={() => {
+    if (orderItems.length === 0) return;
+    if (bulkDiscount === "Senior") {
+      // Turn off bulk Senior discount
+      updateActiveTabBulkDiscount("None");
+      // Remove Senior from all items
+      const newOrderItems = orderItems.map(item => ({
+        ...item,
+        discountType: "None",
+        discountCustomerName: "",
+        discountCustomerID: ""
+      }));
+      updateActiveTabOrderItems(newOrderItems);
+    } else {
+      // Turn off any existing bulk discount first
+      if (bulkDiscount !== "None") {
+        updateActiveTabBulkDiscount("None");
+        // Remove any existing bulk discounts from items
+        const newOrderItems = orderItems.map(item => ({
+          ...item,
+          discountType: "None",
+          discountCustomerName: "",
+          discountCustomerID: ""
+        }));
+        updateActiveTabOrderItems(newOrderItems);
+      }
+      // Open Senior modal for bulk discount
+      setSeniorModalOpen(true);
+    }
+  }}
+  className="flex-1 py-3 rounded-xl font-semibold transition-all active:scale-95 touch-manipulation min-h-[48px] text-sm"
+  style={{
+    // ONLY check bulkDiscount, NOT item.discountType
+    background: bulkDiscount === "Senior" ? "#e67e22" : "#faf7f4",
+    color: bulkDiscount === "Senior" ? "white" : "#3b2212",
+    border: "1.5px solid #e8ddd4"
+  }}
+>
+  Senior
+</button>
+  </div>
+</div>
               <div className="flex justify-between text-sm" style={{ color: "#a07850" }}>
                 <span>Subtotal</span><span>₱{subtotal.toFixed(2)}</span>
               </div>
@@ -2270,7 +3157,7 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
             <button
               disabled={orderItems.length === 0 || isProcessing}
               onClick={() => { if (orderItems.length > 0 && !isProcessing) setConfirmModal({ open: true, method: "Cash" }); }}
-              className="w-full py-4 rounded-xl font-normal transition-all active:scale-95 touch-manipulation"
+              className="w-full py-4 rounded-xl font-normal transition-all active:scale-95 touch-manipulation min-h-[56px]"
               style={{ fontSize: "16px", ...(orderItems.length === 0 || isProcessing
                 ? { background: "#e8e0d8", color: "#b09070", cursor: "not-allowed" }
                 : { background: "#3b2212", color: "white" }) }}>
@@ -2279,12 +3166,12 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
 
             <button
               disabled={orderItems.length === 0 || isProcessing}
-              onClick={() => { if (orderItems.length > 0 && !isProcessing) setConfirmModal({ open: true, method: "GCash" }); }}
-              className="w-full py-4 rounded-xl font-normal transition-all active:scale-95 touch-manipulation"
+              onClick={() => { if (orderItems.length > 0 && !isProcessing) setConfirmModal({ open: true, method: "Non Cash" }); }}
+              className="w-full py-4 rounded-xl font-normal transition-all active:scale-95 touch-manipulation min-h-[56px]"
               style={{ fontSize: "16px", ...(orderItems.length === 0 || isProcessing
                 ? { background: "#e8e0d8", color: "#b09070", cursor: "not-allowed" }
                 : { background: "#0070ba", color: "white" }) }}>
-              GCash {orderItems.length > 0 && `— ₱${total.toFixed(2)}`}
+              Non Cash {orderItems.length > 0 && `— ₱${total.toFixed(2)}`}
             </button>
           </div>
 
@@ -2302,7 +3189,7 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
         </div>
       </div>
 
-      {/* Individual Discount Modal */}
+      {/* Individual Discount Modal (for per-item Add Discount) */}
       {discountModalItem && (
         <IndividualDiscountModal
           isOpen={true}
@@ -2320,17 +3207,62 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
         />
       )}
 
-     <ManageModal
-  isOpen={isManageModalOpen}
-  onClose={() => setIsManageModalOpen(false)}
-  onAddCategory={handleAddCategory}
-  onAddItem={handleAddItem}
-  onDeleteCategory={handleDeleteCategory}
-  onDeleteItem={handleDeleteItem}
-  categories={allCategories}
-  itemsByCategory={allProducts}
-  categoryColors={categoryColors}
-/>
+      {/* PWD Modal (for bulk PWD button) */}
+      {pwdModalOpen && (
+        <PWDDiscountModal
+          isOpen={true}
+          onClose={() => setPwdModalOpen(false)}
+          onApply={(name, id) => {
+            const newOrderItems = orderItems.map(item => ({
+              ...item,
+              discountType: "PWD",
+              discountCustomerName: name,
+              discountCustomerID: id
+            }));
+            updateActiveTabOrderItems(newOrderItems);
+            updateActiveTabBulkDiscount("None");
+            setPwdModalOpen(false);
+          }}
+          itemName="ALL ITEMS"
+          currentName={orderItems.length > 0 && orderItems[0].discountType === "PWD" ? orderItems[0].discountCustomerName || "" : ""}
+          currentID={orderItems.length > 0 && orderItems[0].discountType === "PWD" ? orderItems[0].discountCustomerID || "" : ""}
+        />
+      )}
+
+      {/* Senior Modal (for bulk Senior button) */}
+      {seniorModalOpen && (
+        <SeniorDiscountModal
+          isOpen={true}
+          onClose={() => setSeniorModalOpen(false)}
+          onApply={(name, id) => {
+            const newOrderItems = orderItems.map(item => ({
+              ...item,
+              discountType: "Senior",
+              discountCustomerName: name,
+              discountCustomerID: id
+            }));
+            updateActiveTabOrderItems(newOrderItems);
+            updateActiveTabBulkDiscount("None");
+            setSeniorModalOpen(false);
+          }}
+          itemName="ALL ITEMS"
+          currentName={orderItems.length > 0 && orderItems[0].discountType === "Senior" ? orderItems[0].discountCustomerName || "" : ""}
+          currentID={orderItems.length > 0 && orderItems[0].discountType === "Senior" ? orderItems[0].discountCustomerID || "" : ""}
+        />
+      )}
+
+      <ManageModal
+        isOpen={isManageModalOpen}
+        onClose={() => setIsManageModalOpen(false)}
+        onAddCategory={handleAddCategory}
+        onAddItem={handleAddItem}
+        onDeleteCategory={handleDeleteCategory}
+        onDeleteItem={handleDeleteItem}
+        categories={sortedAllCategories}
+        itemsByCategory={allProducts}
+        categoryColors={categoryColors}
+      />
+
       {/* Confirmation Modal */}
       {confirmModal.open && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-50">
@@ -2348,7 +3280,7 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
             <div className="flex gap-5">
               <button
                 onClick={() => setConfirmModal({ open: false, method: null })}
-                className="flex-1 py-5 rounded-2xl font-bold text-xl active:scale-95 touch-manipulation"
+                className="flex-1 py-5 rounded-2xl font-bold text-xl active:scale-95 touch-manipulation min-h-[56px]"
                 style={{ background: "#f0e8e0", color: "#3b2212" }}>
                 Cancel
               </button>
@@ -2357,11 +3289,11 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
                   setConfirmModal({ open: false, method: null });
                   if (confirmModal.method === "Cash") {
                     setCashModal(true);
-                  } else if (confirmModal.method === "GCash") {
-                    setGcashRefModal(true);
+                  } else if (confirmModal.method === "Non Cash") {
+                    setNonCashModal(true);
                   }
                 }}
-                className="flex-1 py-5 rounded-2xl font-bold text-xl text-white active:scale-95 touch-manipulation"
+                className="flex-1 py-5 rounded-2xl font-bold text-xl text-white active:scale-95 touch-manipulation min-h-[56px]"
                 style={{ background: confirmModal.method === "Cash" ? "#3b2212" : "#0070ba" }}>
                 Confirm
               </button>
@@ -2370,10 +3302,10 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
         </div>
       )}
 
-      {/* Cash Tendered Modal */}
+      {/* Cash Tendered Modal with improved tablet support */}
       {cashModal && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-50">
-          <div className="bg-white rounded-3xl p-9 shadow-2xl mx-6 w-full max-w-xl">
+        <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-50 p-4">
+          <div className={`bg-white rounded-3xl p-6 shadow-2xl w-full max-w-xl ${isLandscape ? 'max-h-[85vh]' : 'max-h-[90vh]'} overflow-y-auto`}>
             <h2 className="text-2xl font-bold mb-3" style={{ color: "#3b2212" }}>Cash Payment</h2>
             <div className="rounded-2xl p-4 mb-4" style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4" }}>
               <div className="flex justify-between items-center">
@@ -2381,34 +3313,42 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
                 <span className="font-bold text-2xl" style={{ color: "#3b2212" }}>₱{total.toFixed(2)}</span>
               </div>
             </div>
-            <div className="rounded-2xl px-5 py-3 mb-3 text-right" style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", minHeight: "60px" }}>
+            
+            {/* Amount display with larger touch area */}
+            <div 
+              className="rounded-2xl px-5 py-4 mb-4 text-right min-h-[80px]"
+              style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4" }}
+            >
               <p className="text-xs mb-1" style={{ color: "#a07850" }}>Amount Received</p>
               <p className="font-bold" style={{ color: amountTendered ? "#3b2212" : "#c0b090", fontSize: "2rem", lineHeight: 1 }}>
                 {amountTendered ? `₱${amountTendered}` : "₱0"}
               </p>
             </div>
-            <div className="grid grid-cols-3 gap-2 mb-4">
+            
+            {/* Numeric keypad with larger buttons for tablet */}
+            <div className="grid grid-cols-3 gap-3 mb-4">
               {["7","8","9","4","5","6","1","2","3"].map((num) => (
                 <button key={num}
                   onClick={() => setAmountTendered(prev => prev === "0" ? num : prev + num)}
-                  className="py-4 rounded-2xl font-bold text-xl transition-all active:scale-95 touch-manipulation"
+                  className="py-5 rounded-2xl font-bold text-2xl transition-all active:scale-95 touch-manipulation min-h-[64px]"
                   style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>
                   {num}
                 </button>
               ))}
               <button
                 onClick={() => setAmountTendered(prev => prev.endsWith(".") ? prev : prev.includes(".") ? prev : prev + ".")}
-                className="py-5 rounded-2xl font-bold text-2xl transition-all active:scale-95 touch-manipulation"
+                className="py-5 rounded-2xl font-bold text-2xl transition-all active:scale-95 touch-manipulation min-h-[64px]"
                 style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>.</button>
               <button
                 onClick={() => setAmountTendered(prev => prev === "0" ? "0" : prev + "0")}
-                className="py-5 rounded-2xl font-bold text-2xl transition-all active:scale-95 touch-manipulation"
+                className="py-5 rounded-2xl font-bold text-2xl transition-all active:scale-95 touch-manipulation min-h-[64px]"
                 style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px solid #e8ddd4" }}>0</button>
               <button
                 onClick={() => setAmountTendered(prev => prev.length <= 1 ? "" : prev.slice(0, -1))}
-                className="py-5 rounded-2xl font-bold text-2xl transition-all active:scale-95 touch-manipulation"
+                className="py-5 rounded-2xl font-bold text-2xl transition-all active:scale-95 touch-manipulation min-h-[64px]"
                 style={{ background: "#fee2e2", color: "#c0392b", border: "1.5px solid #f5c6c6" }}>⌫</button>
             </div>
+            
             {amountTendered && parseFloat(amountTendered) >= total && (
               <div className="rounded-2xl p-4 mb-4" style={{ background: "#f0faf0", border: "1.5px solid #b6e2b6" }}>
                 <div className="flex justify-between items-center">
@@ -2422,15 +3362,16 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
                 <span className="text-lg font-semibold" style={{ color: "#c0392b" }}>Insufficient amount</span>
               </div>
             )}
-            <div className="flex gap-5">
+            
+            <div className="flex gap-4">
               <button
                 onClick={() => { setCashModal(false); setAmountTendered(""); }}
-                className="flex-1 py-4 rounded-2xl font-bold text-lg active:scale-95 touch-manipulation"
+                className="flex-1 py-4 rounded-2xl font-bold text-lg active:scale-95 touch-manipulation min-h-[56px]"
                 style={{ background: "#f0e8e0", color: "#3b2212" }}>Cancel</button>
               <button
                 disabled={!amountTendered || parseFloat(amountTendered) < total || isProcessing}
                 onClick={() => processCheckout("Cash")}
-                className="flex-1 py-4 rounded-2xl font-bold text-lg flex items-center justify-center gap-2 active:scale-95 touch-manipulation"
+                className="flex-1 py-4 rounded-2xl font-bold text-lg flex items-center justify-center gap-2 active:scale-95 touch-manipulation min-h-[56px]"
                 style={{
                   background: !amountTendered || parseFloat(amountTendered) < total || isProcessing ? "#e8e0d8" : "#3b2212",
                   color: !amountTendered || parseFloat(amountTendered) < total || isProcessing ? "#b09070" : "white",
@@ -2451,17 +3392,13 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
         </div>
       )}
 
-      {/* GCash Payment Modal - Name + Number with Custom Keyboard */}
-      {gcashRefModal && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-50">
-          <div className="bg-white rounded-3xl p-9 shadow-2xl mx-6 w-full max-w-2xl">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg"
-                style={{ background: "#e8f4ff", color: "#0070ba" }}>G</div>
-              <h2 className="text-2xl font-bold" style={{ color: "#0070ba" }}>GCash Payment</h2>
-            </div>
+      {/* Non Cash Payment Modal - Simplified with native keyboards */}
+      {nonCashModal && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-50 p-4">
+          <div className={`bg-white rounded-3xl p-6 shadow-2xl w-full max-w-2xl ${isLandscape ? 'max-h-[85vh]' : 'max-h-[90vh]'} overflow-y-auto`}>
+            <h2 className="text-2xl font-bold mb-2" style={{ color: "#0070ba" }}>Non Cash Payment</h2>
             <p className="text-sm mb-5" style={{ color: "#a07850" }}>
-              Enter the customer's name and GCash number.
+              Enter the customer's name and payment reference number.
             </p>
 
             <div className="rounded-2xl p-4 mb-5" style={{ background: "#f0f7ff", border: "1.5px solid #b3d9f7" }}>
@@ -2472,169 +3409,73 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
             </div>
 
             <div className="grid grid-cols-2 gap-6 mb-4">
-              {/* Left Column - Customer Name */}
+              {/* Left Column - Customer Name - uses native keyboard */}
               <div>
-                <label className="text-sm font-semibold block mb-1.5" style={{ color: "#3b2212" }}>
+                <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>
                   Customer Name <span style={{ color: "#c0392b" }}>*</span>
                 </label>
-                <div
-                  onClick={() => setActiveGcashInput("name")}
-                  className="w-full rounded-xl px-4 py-3 text-base transition-all cursor-pointer"
+                <input
+                  type="text"
+                  value={nonCashName}
+                  onChange={(e) => setNonCashName(e.target.value.slice(0, 50))}
+                  maxLength={50}
+                  className="w-full rounded-xl px-4 py-3 text-base outline-none min-h-[52px]"
                   style={{
                     background: "#f0f7ff",
-                    border: activeGcashInput === "name" ? "2px solid #0070ba" : "1.5px solid #b3d9f7",
+                    border: "1.5px solid #b3d9f7",
                     color: "#0070ba",
-                    minHeight: "52px",
                   }}
-                >
-                  {gcashName || <span style={{ color: "#c0b090" }}>Tap to enter name...</span>}
-                </div>
+                  placeholder="Enter customer name"
+                />
               </div>
 
-              {/* Right Column - GCash Number */}
+              {/* Right Column - Reference Number - uses native keyboard */}
               <div>
-                <label className="text-sm font-semibold block mb-1.5" style={{ color: "#3b2212" }}>
-                  GCash Number <span style={{ color: "#c0392b" }}>*</span>
+                <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>
+                  Reference Number <span style={{ color: "#c0392b" }}>*</span>
                 </label>
-                <div className="rounded-xl px-4 py-3 text-center"
+                <input
+                  type="text"
+                  value={nonCashNumber}
+                  onChange={(e) => {
+                    const val = e.target.value.slice(0, 25);
+                    setNonCashNumber(val);
+                  }}
+                  maxLength={25}
+                  className="w-full rounded-xl px-4 py-3 text-base font-mono font-bold outline-none min-h-[52px]"
                   style={{
-                    background: gcashNumber ? "#f0f7ff" : "#faf7f4",
-                    border: gcashNumber.length === 11 ? "2px solid #0070ba" : "1.5px solid #e8ddd4",
-                    minHeight: "52px",
-                  }}>
-                  <p className="font-mono font-bold tracking-widest"
-                    style={{
-                      color: gcashNumber ? "#0070ba" : "#c0b090",
-                      fontSize: "1.2rem",
-                      letterSpacing: "0.1em",
-                    }}>
-                    {gcashNumber || "09XXXXXXXXX"}
-                  </p>
-                </div>
+                    background: "#f0f7ff",
+                    border: nonCashNumber.length >= 10 && nonCashNumber.length <= 25 ? "2px solid #0070ba" : "1.5px solid #b3d9f7",
+                    color: "#0070ba",
+                  }}
+                  placeholder="Enter reference number"
+                />
                 <div className="flex justify-between items-center mt-1">
-                  <p className="text-xs" style={{ color: gcashNumber.length === 11 ? "#2d7a38" : "#c0b090" }}>
-                    {gcashNumber.length === 11 ? "✓ Valid" : "11 digits required"}
+                  <p className="text-xs" style={{ color: nonCashNumber.length >= 10 && nonCashNumber.length <= 25 ? "#2d7a38" : "#c0b090" }}>
+                    {nonCashNumber.length >= 10 && nonCashNumber.length <= 25 ? "✓ Valid" : nonCashNumber.length > 25 ? "Maximum 25 characters" : "10-25 characters required"}
                   </p>
-                  <p className="text-xs font-semibold" style={{ color: gcashNumber.length === 11 ? "#0070ba" : "#c0b090" }}>
-                    {gcashNumber.length}/11
+                  <p className="text-xs font-semibold" style={{ color: nonCashNumber.length >= 10 && nonCashNumber.length <= 25 ? "#0070ba" : "#c0b090" }}>
+                    {nonCashNumber.length}/25
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* Custom Keyboard Section - Shows based on active input */}
-            {activeGcashInput === "name" ? (
-              <div className="mt-4 pt-4 border-t" style={{ borderColor: "#e8ddd4" }}>
-                <div className="flex justify-between items-center mb-3">
-                  <p className="text-sm font-semibold" style={{ color: "#3b2212" }}>
-                    Enter Customer Name
-                  </p>
-                  <button
-                    onClick={() => setActiveGcashInput(null)}
-                    className="text-sm px-4 py-2 rounded-lg font-semibold"
-                    style={{ background: "#0070ba", color: "white" }}
-                  >
-                    Done
-                  </button>
-                </div>
-                
-                <div className="space-y-2">
-                  <div className="grid grid-cols-10 gap-1.5">
-                    {["Q","W","E","R","T","Y","U","I","O","P"].map((key) => (
-                      <button key={key} onClick={() => setGcashName(prev => prev + key)}
-                        className="py-2 rounded-lg font-semibold text-base transition-all active:scale-95 touch-manipulation"
-                        style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
-                        {key}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="grid grid-cols-9 gap-1.5">
-                    {["A","S","D","F","G","H","J","K","L"].map((key) => (
-                      <button key={key} onClick={() => setGcashName(prev => prev + key)}
-                        className="py-2 rounded-lg font-semibold text-base transition-all active:scale-95 touch-manipulation"
-                        style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
-                        {key}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="grid grid-cols-9 gap-1.5">
-                    {["Z","X","C","V","B","N","M"].map((key) => (
-                      <button key={key} onClick={() => setGcashName(prev => prev + key)}
-                        className="py-2 rounded-lg font-semibold text-base transition-all active:scale-95 touch-manipulation"
-                        style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
-                        {key}
-                      </button>
-                    ))}
-                    <button onClick={() => setGcashName(prev => prev + " ")}
-                      className="py-2 rounded-lg font-semibold text-sm transition-all active:scale-95 touch-manipulation col-span-2"
-                      style={{ background: "#faf7f4", color: "#3b2212", border: "1px solid #e8ddd4" }}>
-                      SPACE
-                    </button>
-                    <button onClick={() => setGcashName(prev => prev.slice(0, -1))}
-                      className="py-2 rounded-lg font-semibold text-base transition-all active:scale-95 touch-manipulation"
-                      style={{ background: "#fee2e2", color: "#c0392b", border: "1px solid #f5c6c6" }}>
-                      ⌫
-                    </button>
-                    <button onClick={() => setGcashName("")}
-                      className="py-2 rounded-lg font-semibold text-sm transition-all active:scale-95 touch-manipulation"
-                      style={{ background: "#fff0f0", color: "#c0392b", border: "1px solid #f5c6c6" }}>
-                      CLEAR
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="mt-4 pt-4 border-t" style={{ borderColor: "#e8ddd4" }}>
-                <p className="text-sm font-semibold mb-3" style={{ color: "#3b2212" }}>
-                  Enter GCash Number
-                </p>
-                <div className="grid grid-cols-3 gap-2 mb-2">
-                  {["1","2","3","4","5","6","7","8","9"].map((num) => (
-                    <button
-                      key={num}
-                      onClick={() => { if (gcashNumber.length < 11) setGcashNumber(prev => prev + num); }}
-                      className="py-3 rounded-xl font-bold text-2xl transition-all active:scale-95 touch-manipulation"
-                      style={{ background: "#f0f7ff", color: "#0070ba", border: "1.5px solid #b3d9f7" }}>
-                      {num}
-                    </button>
-                  ))}
-                  <button
-                    onClick={() => setGcashNumber("")}
-                    className="py-3 rounded-xl font-bold text-base transition-all active:scale-95 touch-manipulation"
-                    style={{ background: "#fff0f0", color: "#c0392b", border: "1.5px solid #f5c6c6" }}>
-                    CLEAR
-                  </button>
-                  <button
-                    onClick={() => { if (gcashNumber.length < 11) setGcashNumber(prev => prev + "0"); }}
-                    className="py-3 rounded-xl font-bold text-2xl transition-all active:scale-95 touch-manipulation"
-                    style={{ background: "#f0f7ff", color: "#0070ba", border: "1.5px solid #b3d9f7" }}>
-                    0
-                  </button>
-                  <button
-                    onClick={() => setGcashNumber(prev => prev.slice(0, -1))}
-                    className="py-3 rounded-xl font-bold text-2xl transition-all active:scale-95 touch-manipulation"
-                    style={{ background: "#fee2e2", color: "#c0392b", border: "1.5px solid #f5c6c6" }}>
-                    ⌫
-                  </button>
-                </div>
-              </div>
-            )}
-
             <div className="flex gap-4 mt-6">
               <button
-                onClick={() => { setGcashRefModal(false); setGcashName(""); setGcashNumber(""); setActiveGcashInput(null); }}
-                className="flex-1 py-3 rounded-xl font-bold text-lg active:scale-95 touch-manipulation"
+                onClick={() => { setNonCashModal(false); setNonCashName(""); setNonCashNumber(""); }}
+                className="flex-1 py-4 rounded-xl font-bold text-lg active:scale-95 touch-manipulation min-h-[56px]"
                 style={{ background: "#f0e8e0", color: "#3b2212" }}>
                 Cancel
               </button>
               <button
-                disabled={gcashNumber.length !== 11 || !gcashName.trim() || isProcessing}
-                onClick={() => processCheckout("GCash", gcashNumber.trim(), gcashName.trim())}
-                className="flex-1 py-3 rounded-xl font-bold text-lg transition-all flex items-center justify-center gap-2 active:scale-95 touch-manipulation"
+                disabled={nonCashNumber.length < 10 || nonCashNumber.length > 25 || !nonCashName.trim() || isProcessing}
+                onClick={() => processCheckout("Non Cash", nonCashNumber.trim(), nonCashName.trim())}
+                className="flex-1 py-4 rounded-xl font-bold text-lg transition-all flex items-center justify-center gap-2 active:scale-95 touch-manipulation min-h-[56px]"
                 style={{
-                  background: gcashNumber.length !== 11 || !gcashName.trim() || isProcessing ? "#e8e0d8" : "#0070ba",
-                  color: gcashNumber.length !== 11 || !gcashName.trim() || isProcessing ? "#b09070" : "white",
-                  cursor: gcashNumber.length !== 11 || !gcashName.trim() || isProcessing ? "not-allowed" : "pointer",
+                  background: nonCashNumber.length < 10 || nonCashNumber.length > 25 || !nonCashName.trim() || isProcessing ? "#e8e0d8" : "#0070ba",
+                  color: nonCashNumber.length < 10 || nonCashNumber.length > 25 || !nonCashName.trim() || isProcessing ? "#b09070" : "white",
+                  cursor: nonCashNumber.length < 10 || nonCashNumber.length > 25 || !nonCashName.trim() || isProcessing ? "not-allowed" : "pointer",
                 }}>
                 {isProcessing ? (
                   <>
@@ -2644,85 +3485,134 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
                     </svg>
                     Processing...
                   </>
-                ) : "Confirm GCash"}
+                ) : "Confirm Payment"}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Success Modal */}
+      {/* Success Modal with Print Button */}
       {isSuccessModalOpen && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-50">
-          <div className="bg-white rounded-3xl p-14 shadow-2xl text-center mx-6 w-full max-w-2xl">
-            <h2 className="text-4xl font-bold mb-8" style={{ color: "#3b2212" }}>Order Completed!</h2>
+        <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-50 p-4">
+          <div className={`bg-white rounded-3xl p-8 shadow-2xl text-center w-full max-w-2xl ${isLandscape ? 'max-h-[85vh]' : 'max-h-[90vh]'} overflow-y-auto`}>
+            <div className="w-16 h-16 rounded-full bg-green-500 flex items-center justify-center text-white text-3xl mx-auto mb-4">
+              ✓
+            </div>
+            <h2 className="text-3xl font-bold mb-6" style={{ color: "#3b2212" }}>Order Completed!</h2>
             {lastTransaction && (
-              <div className="rounded-2xl p-8 mb-8 text-left space-y-5" style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4" }}>
+              <div className="rounded-2xl p-6 mb-6 text-left space-y-4" style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4" }}>
                 <div className="flex justify-between items-center">
-                  <span className="text-lg" style={{ color: "#a07850" }}>Transaction No.</span>
-                  <span className="font-bold text-lg" style={{ color: "#3b2212" }}>{lastTransaction.number}</span>
+                  <span className="text-base" style={{ color: "#a07850" }}>Transaction No.</span>
+                  <span className="font-bold text-base" style={{ color: "#3b2212" }}>{lastTransaction.number}</span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-lg" style={{ color: "#a07850" }}>Payment Method</span>
-                  <span className="font-bold text-lg" style={{ color: "#3b2212" }}>{lastTransaction.method}</span>
+                  <span className="text-base" style={{ color: "#a07850" }}>Payment Method</span>
+                  <span className="font-bold text-base" style={{ color: "#3b2212" }}>{lastTransaction.method}</span>
                 </div>
-                {lastTransaction.method === "GCash" && (lastTransaction.gcashSenderName || lastTransaction.gcashNumber) && (
+                {lastTransaction.method === "Non Cash" && (lastTransaction.nonCashSenderName || lastTransaction.nonCashNumber) && (
                   <div className="rounded-2xl p-4 space-y-3"
                     style={{ background: "#f0f7ff", border: "1.5px solid #b3d9f7" }}>
-                    {lastTransaction.gcashSenderName && (
+                    {lastTransaction.nonCashSenderName && (
                       <div className="flex justify-between items-center">
-                        <span className="text-lg" style={{ color: "#0070ba" }}>GCash Name</span>
-                        <span className="font-bold text-lg" style={{ color: "#0070ba" }}>
-                          {lastTransaction.gcashSenderName}
+                        <span className="text-base" style={{ color: "#0070ba" }}>Customer Name</span>
+                        <span className="font-bold text-base" style={{ color: "#0070ba" }}>
+                          {lastTransaction.nonCashSenderName}
                         </span>
                       </div>
                     )}
-                    {lastTransaction.gcashNumber && (
+                    {lastTransaction.nonCashNumber && (
                       <div className="flex justify-between items-center">
-                        <span className="text-lg" style={{ color: "#0070ba" }}>GCash Number</span>
-                        <span className="font-bold text-lg tracking-widest" style={{ color: "#0070ba" }}>
-                          {lastTransaction.gcashNumber}
+                        <span className="text-base" style={{ color: "#0070ba" }}>Reference Number</span>
+                        <span className="font-bold text-base tracking-widest" style={{ color: "#0070ba" }}>
+                          {lastTransaction.nonCashNumber}
                         </span>
                       </div>
                     )}
                   </div>
                 )}
                 <div className="flex justify-between items-center" style={{ borderTop: "1.5px solid #e8ddd4", paddingTop: "16px" }}>
-                  <span className="text-lg" style={{ color: "#a07850" }}>Total Paid</span>
-                  <span className="font-bold text-3xl" style={{ color: "#3b2212" }}>₱{lastTransaction.total.toFixed(2)}</span>
+                  <span className="text-base" style={{ color: "#a07850" }}>Total Paid</span>
+                  <span className="font-bold text-2xl" style={{ color: "#3b2212" }}>₱{lastTransaction.total.toFixed(2)}</span>
                 </div>
                 {lastTransaction.method === "Cash" && lastTransaction.amountTendered && (
                   <>
                     <div className="flex justify-between items-center">
-                      <span className="text-lg" style={{ color: "#a07850" }}>Amount Received</span>
+                      <span className="text-base" style={{ color: "#a07850" }}>Amount Received</span>
                       <span className="font-bold text-xl" style={{ color: "#3b2212" }}>₱{parseFloat(lastTransaction.amountTendered).toFixed(2)}</span>
                     </div>
-                    <div className="flex justify-between items-center rounded-2xl p-5" style={{ background: "#f0faf0" }}>
-                      <span className="text-xl font-semibold" style={{ color: "#2d7a38" }}>Change</span>
-                      <span className="font-bold text-3xl" style={{ color: "#2d7a38" }}>₱{(parseFloat(lastTransaction.amountTendered) - lastTransaction.total).toFixed(2)}</span>
+                    <div className="flex justify-between items-center rounded-2xl p-4" style={{ background: "#f0faf0" }}>
+                      <span className="text-lg font-semibold" style={{ color: "#2d7a38" }}>Change</span>
+                      <span className="font-bold text-2xl" style={{ color: "#2d7a38" }}>₱{(parseFloat(lastTransaction.amountTendered) - lastTransaction.total).toFixed(2)}</span>
                     </div>
                   </>
                 )}
               </div>
             )}
-            <button
-              onClick={() => setIsSuccessModalOpen(false)}
-              className="px-6 py-5 rounded-2xl text-white font-bold text-xl w-full active:scale-95 touch-manipulation"
-              style={{ background: "#3b2212" }}>
-              Make another order
-            </button>
+            
+            {/* SIDE-BY-SIDE BUTTONS */}
+            <div className="flex gap-4" style={{ flexDirection: isLandscape ? 'row' : 'column' }}>
+              <button
+                onClick={() => {
+                  const printWindow = window.open('', '_blank');
+                  if (printWindow && lastTransaction) {
+                    printWindow.document.write(`
+                      <html>
+                        <head>
+                          <title>Receipt - ${lastTransaction.number}</title>
+                          <style>
+                            * { margin: 0; padding: 0; box-sizing: border-box; }
+                            body { 
+                              font-family: monospace; 
+                              padding: 20px; 
+                              display: flex; 
+                              justify-content: center; 
+                              background: white;
+                            }
+                            @media print {
+                              body { padding: 0; }
+                            }
+                          </style>
+                        </head>
+                        <body>
+                          ${getReceiptHTML(lastTransaction)}
+                          <script>
+                            window.onload = function() {
+                              window.print();
+                              window.onafterprint = function() { window.close(); };
+                            };
+                          </script>
+                        </body>
+                      </html>
+                    `);
+                    printWindow.document.close();
+                  }
+                }}
+                className="flex-1 py-4 rounded-2xl font-bold text-lg flex items-center justify-center gap-2 active:scale-95 touch-manipulation min-h-[56px]"
+                style={{ background: "white", border: "1.5px solid #cbd5e1", color: "#1e293b" }}
+              >
+                Print
+              </button>
+              <button
+                onClick={() => setIsSuccessModalOpen(false)}
+                className="flex-1 py-4 rounded-2xl text-white font-bold text-lg flex items-center justify-center gap-2 active:scale-95 touch-manipulation min-h-[56px]"
+                style={{ background: "#3b2212" }}
+              >
+                New Order
+              </button>
+            </div>
           </div>
         </div>
       )}
 
       {/* Product Modal */}
       {selectedProduct && (
-        <div className="fixed inset-0 flex items-center justify-center z-50"
+        <div className="fixed inset-0 flex items-center justify-center z-50 p-4"
           style={{ background: "rgba(0,0,0,0.4)", backdropFilter: "blur(4px)" }}>
-          <div className="rounded-3xl p-8 relative max-h-[90vh] overflow-y-auto"
+          <div className={`rounded-3xl p-6 relative ${isLandscape ? 'max-h-[85vh]' : 'max-h-[90vh]'} overflow-y-auto`}
             style={{ background: "white", border: "2px solid #e8ddd4", width: "fit-content", minWidth: "500px", maxWidth: "85vw" }}>
             <button
-              className="absolute top-5 right-5 w-12 h-12 rounded-full flex items-center justify-center text-xl active:scale-95 touch-manipulation"
+              className="absolute top-4 right-4 w-12 h-12 rounded-full flex items-center justify-center text-xl active:scale-95 touch-manipulation min-h-[44px]"
               style={{ background: "#f7f3ef", color: "#3b2212", border: "1px solid #e8ddd4" }}
               onClick={() => {
                 setSelectedProduct(null);
@@ -2745,7 +3635,7 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
                   <div className="flex gap-4">
                     {quesadillasVariants.map((v) => (
                       <button key={v} onClick={() => setSelectedVariant(v)}
-                        className="flex-1 px-4 py-4 rounded-xl font-semibold transition-all active:scale-95 touch-manipulation flex flex-col items-center gap-1"
+                        className="flex-1 px-4 py-4 rounded-xl font-semibold transition-all active:scale-95 touch-manipulation flex flex-col items-center gap-1 min-h-[64px]"
                         style={selectedVariant === v ? activeOptStyle : inactiveOptStyle}>
                         <span style={{ fontSize: "16px" }}>{v}</span>
                         <span style={{ fontSize: "14px", opacity: 0.75 }}>₱{v === "Beef" ? "200" : "170"}</span>
@@ -2764,7 +3654,7 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
                       <div className="flex gap-3">
                         {["Hot", "Ice"].map((t) => (
                           <button key={t} onClick={() => setTempOption(t)}
-                            className="flex-1 px-5 py-3 rounded-xl font-semibold transition-all active:scale-95 touch-manipulation"
+                            className="flex-1 px-5 py-3 rounded-xl font-semibold transition-all active:scale-95 touch-manipulation min-h-[48px]"
                             style={{ fontSize: "16px", ...(tempOption === t ? activeOptStyle : inactiveOptStyle) }}>
                             {t}
                           </button>
@@ -2777,7 +3667,7 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
                     <div className="flex gap-3">
                       {(activeCategory === "Hot Tea" || selectedProductCategory === "Hot Tea" ? ["M - 220ml", "Pot"] : ["Medium", "Large"]).map((s) => (
                         <button key={s} onClick={() => setSizeOption(s)}
-                          className="flex-1 px-5 py-3 rounded-xl font-semibold transition-all active:scale-95 touch-manipulation"
+                          className="flex-1 px-5 py-3 rounded-xl font-semibold transition-all active:scale-95 touch-manipulation min-h-[48px]"
                           style={{ fontSize: "16px", ...(sizeOption === s ? activeOptStyle : inactiveOptStyle) }}>
                           {s}
                         </button>
@@ -2793,7 +3683,7 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
                   <div className="flex gap-3">
                     {["0%", "50%", "75%", "100%"].map((sugar) => (
                       <button key={sugar} onClick={() => setSugarOption(sugar)}
-                        className="flex-1 px-4 py-3 rounded-xl font-semibold transition-all active:scale-95 touch-manipulation"
+                        className="flex-1 px-4 py-3 rounded-xl font-semibold transition-all active:scale-95 touch-manipulation min-h-[48px]"
                         style={{ fontSize: "16px", ...(sugarOption === sugar ? activeOptStyle : inactiveOptStyle) }}>
                         {sugar}
                       </button>
@@ -2808,11 +3698,11 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
                     <p className="font-semibold text-base" style={{ color: "#3b2212" }}>
                       Add Ons <span style={{ color: "#a07850" }}>(+₱30 each)</span>
                     </p>
-                    <button onClick={handleClearAddOns} className="text-sm underline py-2 px-3 rounded-lg active:scale-95 touch-manipulation" style={{ color: "#a07850" }}>Clear all</button>
+                    <button onClick={handleClearAddOns} className="text-sm underline py-2 px-3 rounded-lg active:scale-95 touch-manipulation min-h-[36px]" style={{ color: "#a07850" }}>Clear all</button>
                   </div>
                   <div className="grid grid-cols-4 gap-3">
                     <button onClick={handleClearAddOns}
-                      className="px-2 py-3 rounded-xl font-semibold transition-all active:scale-95 touch-manipulation flex flex-col items-center justify-center gap-1"
+                      className="px-2 py-3 rounded-xl font-semibold transition-all active:scale-95 touch-manipulation flex flex-col items-center justify-center gap-1 min-h-[56px]"
                       style={{ fontSize: "14px", ...(selectedAddOns.length === 0 ? activeOptStyle : inactiveOptStyle) }}>
                       <span>None</span>
                     </button>
@@ -2828,7 +3718,7 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
                           key={addOn} 
                           disabled={isOOS}
                           onClick={() => handleToggleAddOn(addOn)}
-                          className="px-2 py-3 rounded-xl font-semibold transition-all touch-manipulation flex flex-col items-center justify-center gap-1"
+                          className="px-2 py-3 rounded-xl font-semibold transition-all touch-manipulation flex flex-col items-center justify-center gap-1 min-h-[56px]"
                           style={{
                             ...(isOOS
                               ? { background: "#f5f5f5", color: "#c0b090", border: "1.5px solid #e8ddd4", cursor: "not-allowed", opacity: 0.7 }
@@ -2864,7 +3754,7 @@ const handleAddItem = (item: { name: string; price: number; category: string }) 
               <button
                 disabled={(selectedProduct === "Quesadillas" && !selectedVariant) || currentMissingIngredients.length > 0}
                 onClick={handleAddToOrder}
-                className="w-full py-4 rounded-xl font-semibold text-lg transition-all active:scale-95 touch-manipulation mt-4"
+                className="w-full py-4 rounded-xl font-semibold text-lg transition-all active:scale-95 touch-manipulation mt-4 min-h-[56px]"
                 style={
                   currentMissingIngredients.length > 0 
                   ? { background: "#e8e0d8", color: "#c0392b", cursor: "not-allowed" } : 

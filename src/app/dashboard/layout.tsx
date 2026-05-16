@@ -61,7 +61,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         }}
       >
 
-        {/* LEFT SIDE - Cashier Info (replaces brand) */}
+        {/* LEFT SIDE - Barista Info (replaces brand) */}
         <div className="flex items-center gap-2">
           <div
             className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm"
@@ -74,7 +74,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               {user?.displayName || "User"}
             </p>
             <p className="text-xs" style={{ color: "#d4a97a" }}>
-              Cashier
+              Barista
             </p>
           </div>
         </div>
