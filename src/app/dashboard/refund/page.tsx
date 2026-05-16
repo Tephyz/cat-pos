@@ -16,6 +16,9 @@ interface OrderItem {
   price: number;
   addOns?: string[];
   variant?: string;
+  discountType?: "None" | "PWD" | "Senior";
+  discountCustomerName?: string;
+  discountCustomerID?: string;
 }
 
 interface OrderRecord {
@@ -24,43 +27,54 @@ interface OrderRecord {
   createdAt: any;
   paymentMethod: string;
   totalAmount: number;
-  cashierName: string;
+  baristaName: string;
+  cashierName?: string;
   status?: string; 
   items: OrderItem[];
   discount?: {
-    type: string; // "PWD", "Senior", "Bulk 5%", "Bulk 10%", etc.
+    type: string;
     amount: number;
     percentage?: number;
     id?: string;
   };
   subtotal?: number;
+  nonCashSenderName?: string;
+  nonCashNumber?: string;
+  amountTendered?: string;
 }
 
-// Price configuration for add-ons (for display calculations)
+// Price configuration for add-ons (UPDATED to ₱30)
 const ADD_ON_PRICES: Record<string, number> = {
-  Pearl: 15,
-  Nata: 15,
-  Espresso: 20,
-  "Coffee Jelly": 15,
-  Oreo: 20,
-  Caramel: 10,
-  "Whip Cream": 10
+  Pearl: 30,
+  Nata: 30,
+  Espresso: 30,
+  "Coffee Jelly": 30,
+  Oreo: 30,
+  Caramel: 30,
+  "Whip Cream": 30
 };
 
-// Helper function to calculate item total with add-ons
+// Helper function to calculate item total with add-ons AND discounts
 const calculateItemBreakdown = (item: OrderItem) => {
-  // Calculate add-ons total
   const addOnsTotal = (item.addOns || []).reduce((total, addon) => {
     return total + (ADD_ON_PRICES[addon] || 0);
   }, 0);
   
-  // Item total = (base price + add-ons) * quantity
-  const itemTotal = (item.price + addOnsTotal) * item.quantity;
+  const itemOriginalTotal = (item.price + addOnsTotal) * item.quantity;
+  
+  // Check if item has individual discount (PWD/Senior)
+  const hasDiscount = item.discountType && item.discountType !== "None";
+  const discountedTotal = hasDiscount ? itemOriginalTotal * 0.8 : itemOriginalTotal;
+  const discountAmount = hasDiscount ? itemOriginalTotal - discountedTotal : 0;
   
   return {
     basePrice: item.price,
     addOnsTotal,
-    itemTotal,
+    itemOriginalTotal,
+    discountedTotal,
+    discountAmount,
+    hasDiscount,
+    discountType: item.discountType || null,
     addOnsBreakdown: (item.addOns || []).map(addon => ({
       name: addon,
       price: ADD_ON_PRICES[addon] || 0
@@ -92,8 +106,8 @@ export default function RefundedOrdersPage() {
         
         // Sort from latest to oldest
         records.sort((a, b) => {
-          const dateA = a.createdAt?.toDate()?.getTime() || 0;
-          const dateB = b.createdAt?.toDate()?.getTime() || 0;
+          const dateA = a.createdAt?.toDate?.()?.getTime() || 0;
+          const dateB = b.createdAt?.toDate?.()?.getTime() || 0;
           return dateB - dateA;
         });
 
@@ -116,6 +130,7 @@ export default function RefundedOrdersPage() {
   const filteredOrders = refundedOrders.filter(o => {
     const matchesSearch = 
       (o.transactionNumber || "").toLowerCase().includes(searchQuery.toLowerCase()) || 
+      (o.baristaName || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
       (o.cashierName || "").toLowerCase().includes(searchQuery.toLowerCase());
 
     let matchesDate = true;
@@ -190,14 +205,30 @@ export default function RefundedOrdersPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
             {filteredOrders.map((order) => {
+              // Calculate subtotal with discounts
               const orderSubtotal = order.subtotal || order.items.reduce((sum, item) => {
                 const breakdown = calculateItemBreakdown(item);
-                return sum + breakdown.itemTotal;
+                return sum + breakdown.discountedTotal;
               }, 0);
               
               const discountAmount = order.discount?.amount || 0;
               const discountType = order.discount?.type || "None";
-              const discountPercentage = order.discount?.percentage;
+              
+              // Calculate individual discounts
+              const totalIndividualDiscount = order.items.reduce((sum, item) => {
+                const breakdown = calculateItemBreakdown(item);
+                return sum + breakdown.discountAmount;
+              }, 0);
+              
+              // Check if this is a bulk discount (all items have same discount)
+              const allItemsHaveDiscount = order.items.length > 0 && 
+                order.items.every(item => item.discountType && item.discountType !== "None");
+              const allSameDiscountType = allItemsHaveDiscount && 
+                order.items.every(item => item.discountType === order.items[0]?.discountType);
+              const isBulkDiscount = allSameDiscountType && totalIndividualDiscount > 0;
+              const bulkDiscountType = isBulkDiscount ? order.items[0]?.discountType : null;
+              
+              const totalDiscount = discountAmount + totalIndividualDiscount;
               
               return (
                 <div key={order.id} className="bg-white rounded-2xl shadow-sm border-[1.5px] border-[#e8ddd4] hover:shadow-md hover:border-[#f5c6c6] transition-all overflow-hidden flex flex-col h-full">
@@ -227,7 +258,7 @@ export default function RefundedOrdersPage() {
                         {order.items?.length || 0} item(s)
                       </span>
                       <span className="text-xs text-[#6b4c30] bg-[#faf7f4] px-2 py-0.5 rounded-md border border-[#e8ddd4] font-medium truncate">
-                        Barista: {order.cashierName || 'Unknown'}
+                        Barista: {order.baristaName || order.cashierName || 'Unknown'}
                       </span>
                     </div>
                   </div>
@@ -254,7 +285,7 @@ export default function RefundedOrdersPage() {
                                     )}
                                   </div>
                                   
-                                  {/* Price Breakdown - Compact */}
+                                  {/* Price Breakdown with Discount */}
                                   <div className="mt-1 ml-4 space-y-0.5 text-xs">
                                     <div className="flex justify-between text-[#6b4c30]">
                                       <span>Base price:</span>
@@ -278,9 +309,17 @@ export default function RefundedOrdersPage() {
                                       </>
                                     )}
                                     
+                                    {/* SHOW DISCOUNT IF APPLIED */}
+                                    {breakdown.hasDiscount && (
+                                      <div className="flex justify-between text-[#c0392b] font-medium">
+                                        <span>{breakdown.discountType} Discount (20%):</span>
+                                        <span>-₱{breakdown.discountAmount.toFixed(2)}</span>
+                                      </div>
+                                    )}
+                                    
                                     <div className="flex justify-between font-bold text-[#c0392b] border-t border-[#d4c5b8] mt-1 pt-1">
                                       <span>Item total:</span>
-                                      <span>₱{breakdown.itemTotal.toFixed(2)}</span>
+                                      <span>₱{breakdown.discountedTotal.toFixed(2)}</span>
                                     </div>
                                   </div>
                                 </div>
@@ -300,7 +339,7 @@ export default function RefundedOrdersPage() {
                           return (
                             <div key={idx} className="flex justify-between text-xs text-[#6b4c30]">
                               <span className="truncate">{item.quantity}x {item.name}{item.size ? ` (${item.size})` : ''}</span>
-                              <span>₱{breakdown.itemTotal.toFixed(2)}</span>
+                              <span>₱{breakdown.discountedTotal.toFixed(2)}</span>
                             </div>
                           );
                         })}
@@ -312,26 +351,46 @@ export default function RefundedOrdersPage() {
                           <span>₱{orderSubtotal.toFixed(2)}</span>
                         </div>
                         
-                        {/* Discount Section - Replaces Tax/VAT */}
-                        {discountAmount > 0 ? (
-                          <>
-                            <div className="flex justify-between text-xs text-[#c0392b]">
-                              <span>Discount ({discountType}):</span>
-                              <span>- ₱{discountAmount.toFixed(2)}</span>
-                            </div>
-                            {discountPercentage && (
-                              <div className="flex justify-between text-xs text-[#a07850]">
-                                <span className="ml-4">({discountPercentage}% off)</span>
-                                <span></span>
-                              </div>
-                            )}
-                          </>
-                        ) : (
-                          <div className="flex justify-between text-xs text-[#a07850]">
-                            <span>Discount:</span>
-                            <span>₱0.00</span>
-                          </div>
-                        )}
+                        {/* Discount Section - Shows both bulk and individual */}
+{(() => {
+  const discountedItem = order.items.find(item => item.discountType && item.discountType !== "None");
+  const individualDiscountType = discountedItem?.discountType || "";
+  
+  return totalDiscount > 0 ? (
+    <>
+      <div className="flex justify-between text-xs text-[#c0392b]">
+        <span>Discount:</span>
+        <span>- ₱{totalDiscount.toFixed(2)}</span>
+      </div>
+      
+      {isBulkDiscount && (
+        <div className="flex justify-between text-xs text-[#a07850] ml-4">
+          <span>({bulkDiscountType} bulk - 20% off all items)</span>
+          <span>-₱{totalIndividualDiscount.toFixed(2)}</span>
+        </div>
+      )}
+      
+      {!isBulkDiscount && totalIndividualDiscount > 0 && (
+        <div className="flex justify-between text-xs text-[#a07850] ml-4">
+          <span>({individualDiscountType} per item)</span>
+          <span>-₱{totalIndividualDiscount.toFixed(2)}</span>
+        </div>
+      )}
+      
+      {discountAmount > 0 && discountType !== "PWD" && discountType !== "Senior" && (
+        <div className="flex justify-between text-xs text-[#a07850] ml-4">
+          <span>({discountType} bulk)</span>
+          <span>-₱{discountAmount.toFixed(2)}</span>
+        </div>
+      )}
+    </>
+  ) : (
+    <div className="flex justify-between text-xs text-[#a07850]">
+      <span>Discount:</span>
+      <span>₱0.00</span>
+    </div>
+  );
+})()}
                         
                         <div className="flex justify-between font-bold text-base text-[#c0392b] border-t-2 border-[#d4c5b8] pt-1 mt-1">
                           <span>TOTAL REFUNDED:</span>
