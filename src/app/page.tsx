@@ -11,6 +11,7 @@ export default function SigninPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [iconsReady, setIconsReady] = useState(false); // NEW: track when icons are ready
 
   const { signIn, user } = useAuth();
   const router = useRouter();
@@ -21,6 +22,12 @@ export default function SigninPage() {
 
   useEffect(() => {
     const t = setTimeout(() => setMounted(true), 40);
+    return () => clearTimeout(t);
+  }, []);
+
+  // NEW: Delay showing icons to prevent reload glitch
+  useEffect(() => {
+    const t = setTimeout(() => setIconsReady(true), 100);
     return () => clearTimeout(t);
   }, []);
 
@@ -60,20 +67,24 @@ export default function SigninPage() {
       {/* Soft vignette and texture */}
       <div className="absolute inset-0 -z-10 coffee-vignette" />
 
-      {/* Decorative SVG icons (low opacity) */}
-      <svg className="bg-icon icon-1" viewBox="0 0 24 24" fill="none" aria-hidden>
-        <path d="M3 8c0-3 3-5 6-5s6 2 6 5v1H3V8z" stroke="currentColor" strokeWidth="1.2" />
-        <rect x="4" y="9" width="12" height="7" rx="2" stroke="currentColor" strokeWidth="1.2" />
-      </svg>
+      {/* Decorative SVG icons - FIXED: only show when iconsReady is true AND mounted */}
+      {iconsReady && mounted && (
+        <>
+          <svg className="bg-icon icon-1" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <path d="M3 8c0-3 3-5 6-5s6 2 6 5v1H3V8z" stroke="currentColor" strokeWidth="1.2" />
+            <rect x="4" y="9" width="12" height="7" rx="2" stroke="currentColor" strokeWidth="1.2" />
+          </svg>
 
-      <svg className="bg-icon icon-2" viewBox="0 0 24 24" fill="none" aria-hidden>
-        <ellipse cx="12" cy="12" rx="7" ry="10" stroke="currentColor" strokeWidth="1.2" />
-        <path d="M9 9c1.5 1 3 1 4.5 0" stroke="currentColor" strokeWidth="1.2" />
-      </svg>
+          <svg className="bg-icon icon-2" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <ellipse cx="12" cy="12" rx="7" ry="10" stroke="currentColor" strokeWidth="1.2" />
+            <path d="M9 9c1.5 1 3 1 4.5 0" stroke="currentColor" strokeWidth="1.2" />
+          </svg>
 
-      <svg className="bg-icon icon-3" viewBox="0 0 24 24" fill="none" aria-hidden>
-        <path d="M12 2c2 3 6 3 8 6 2 3 0 6-3 8s-6 2-8 0-4-6-2-9 3-6 5-5z" stroke="currentColor" strokeWidth="1.2" />
-      </svg>
+          <svg className="bg-icon icon-3" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <path d="M12 2c2 3 6 3 8 6 2 3 0 6-3 8s-6 2-8 0-4-6-2-9 3-6 5-5z" stroke="currentColor" strokeWidth="1.2" />
+          </svg>
+        </>
+      )}
       
       {/* Main card */}
       <div
@@ -195,7 +206,7 @@ export default function SigninPage() {
         </div>
       </div>
 
-      {/* Inline CSS */}
+      {/* Inline CSS - KEPT EXACTLY THE SAME */}
       <style jsx>{`
         .coffee-gradient {
           background: radial-gradient(1200px 600px at 10% 10%, rgba(255,240,220,0.04), transparent 8%),
