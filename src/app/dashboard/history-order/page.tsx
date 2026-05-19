@@ -272,6 +272,9 @@ export default function OrderHistoryPage() {
   const [orderToRefund, setOrderToRefund] = useState<OrderRecord | null>(null);
   const [orderToReprint, setOrderToReprint] = useState<OrderRecord | null>(null);
   const [refundSuccessMsg, setRefundSuccessMsg] = useState<string | null>(null);
+  
+  // NEW: State for Non-Cash restriction modal
+  const [showNonCashRestrictionModal, setShowNonCashRestrictionModal] = useState<OrderRecord | null>(null);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -292,6 +295,7 @@ export default function OrderHistoryPage() {
     }
   }, [user, loading, router]);
 
+  // Modified refund handler - now called only for Cash orders
   const executeRefund = async () => {
     if (!orderToRefund) return;
     
@@ -399,6 +403,17 @@ export default function OrderHistoryPage() {
       setTimeout(() => setRefundSuccessMsg(null), 3000);
     } finally {
       setIsProcessing(null);
+    }
+  };
+
+  // NEW: Handler for refund button click - checks payment method
+  const handleRefundClick = (order: OrderRecord) => {
+    if (order.paymentMethod === "Non Cash") {
+      // Show restriction modal for non-cash orders
+      setShowNonCashRestrictionModal(order);
+    } else {
+      // Proceed with normal refund for cash orders
+      setOrderToRefund(order);
     }
   };
 
@@ -699,7 +714,7 @@ export default function OrderHistoryPage() {
                       </span>
                     ) : (
                       <button 
-                        onClick={() => setOrderToRefund(order)} 
+                        onClick={() => handleRefundClick(order)} 
                         disabled={isProcessing === order.id}
                         className={`w-full text-sm font-bold text-white px-3 py-1.5 rounded-lg shadow-sm transition-all active:scale-95 flex items-center justify-center gap-2 ${
                           isProcessing === order.id 
@@ -810,23 +825,71 @@ export default function OrderHistoryPage() {
         </div>
       )}
 
-      {/* REFUND CONFIRMATION MODAL */}
+      {/* NEW: NON-CASH RESTRICTION MODAL */}
+      {showNonCashRestrictionModal && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-[100] p-4 animate-fade-in">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-[#fff0f0] flex items-center justify-center">
+                <svg className="w-5 h-5 text-[#c0392b]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <h3 className="text-xl font-bold text-[#3b2212]">Non-Cash Refund Restriction</h3>
+            </div>
+            
+            <div className="bg-[#fef5e8] border-l-4 border-[#e67e22] p-4 mb-6 rounded-lg">
+              <div className="flex items-start gap-3">
+                <svg className="w-5 h-5 text-[#e67e22] mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <p className="text-sm text-[#3b2212] leading-relaxed">
+                  <strong className="block text-base mb-1"> Non-Cash to Non-Cash Only</strong>
+                  Refunds for <strong className="text-[#e67e22]">Non-Cash transactions</strong> must be processed through the <strong className="underline">same digital payment method</strong> used for the original purchase.
+                </p>
+              </div>
+            </div>
+            
+            <div className="bg-[#faf7f4] p-4 rounded-lg mb-6">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-sm text-[#6b4c30]">Order Number:</span>
+                <span className="font-bold text-[#3b2212]">#{showNonCashRestrictionModal.transactionNumber}</span>
+              </div>
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-sm text-[#6b4c30]">Payment Method:</span>
+                <span className="font-bold text-[#0070ba]">Non-Cash</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-[#6b4c30]">Refund Amount:</span>
+                <span className="font-bold text-xl text-[#c0392b]">₱{showNonCashRestrictionModal.totalAmount.toFixed(2)}</span>
+              </div>
+            </div>
+            
+            <p className="text-xs text-[#a07850] mb-6 text-center">
+              Please process the refund via GCash, Maya, or other digital wallet used by the customer.
+            </p>
+            
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowNonCashRestrictionModal(null)}
+                className="flex-1 py-2.5 rounded-xl font-bold transition-all active:scale-95 text-white bg-[#3b2212] hover:bg-[#2d1a0e]"
+              >
+                Understood
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* REFUND CONFIRMATION MODAL - Only shown for Cash orders now */}
       {orderToRefund && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-[100] p-4 animate-fade-in">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6">
             <div className="flex items-center gap-3 mb-4">
-              <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                orderToRefund.paymentMethod === 'Non Cash' ? 'bg-[#0070ba]' : 'bg-[#fff0f0]'
-              }`}>
-                {orderToRefund.paymentMethod === 'Non Cash' ? (
-                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-                  </svg>
-                ) : (
-                  <svg className="w-5 h-5 text-[#c0392b]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
-                  </svg>
-                )}
+              <div className="w-10 h-10 rounded-full bg-[#fff0f0] flex items-center justify-center">
+                <svg className="w-5 h-5 text-[#c0392b]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                </svg>
               </div>
               <h3 className="text-xl font-bold text-[#3b2212]">Refund Order</h3>
             </div>
@@ -835,28 +898,15 @@ export default function OrderHistoryPage() {
               Are you sure you want to void and refund Order <strong className="text-[#3b2212]">#{orderToRefund.transactionNumber}</strong>?
             </p>
             
-            <div className={`p-3 rounded-lg mb-6 ${
-              orderToRefund.paymentMethod === 'Non Cash' ? 'bg-[#e6f3ff]' : 'bg-[#faf7f4]'
-            }`}>
-              {orderToRefund.paymentMethod === 'Non Cash' ? (
-                <div className="flex items-start gap-2">
-                  <svg className="w-5 h-5 text-[#0070ba] mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-                  </svg>
-                  <p className="text-sm text-[#3b2212]">
-                    <strong className="text-[#0070ba]">Non-Cash Refund:</strong> The amount of <strong>₱{orderToRefund.totalAmount.toFixed(2)}</strong> will be processed back through the original digital payment method.
-                  </p>
-                </div>
-              ) : (
-                <div className="flex items-start gap-2">
-                  <svg className="w-5 h-5 text-[#c0392b] mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm0 0V9z"></path>
-                  </svg>
-                  <p className="text-sm text-[#3b2212]">
-                    <strong className="text-[#c0392b]">Cash Refund:</strong> The amount of <strong>₱{orderToRefund.totalAmount.toFixed(2)}</strong> will be deducted from the shift's expected cash.
-                  </p>
-                </div>
-              )}
+            <div className="bg-[#faf7f4] p-3 rounded-lg mb-6">
+              <div className="flex items-start gap-2">
+                <svg className="w-5 h-5 text-[#c0392b] mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm0 0V9z"></path>
+                </svg>
+                <p className="text-sm text-[#3b2212]">
+                  <strong className="text-[#c0392b]">Cash Refund:</strong> The amount of <strong>₱{orderToRefund.totalAmount.toFixed(2)}</strong> will be deducted from the shift's expected cash.
+                </p>
+              </div>
             </div>
             
             <p className="text-sm text-[#a07850] mb-6 leading-relaxed">
