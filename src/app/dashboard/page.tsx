@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
-import { collection, addDoc, serverTimestamp, runTransaction, doc, increment, query, where, getDocs, onSnapshot, DocumentReference } from "firebase/firestore";
+import { collection, addDoc, serverTimestamp, runTransaction, doc, increment, query, where, getDocs, onSnapshot, DocumentReference, deleteDoc, updateDoc, setDoc, orderBy } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
 // Utility function for generating IDs (tablet compatible)
@@ -15,7 +15,7 @@ const generateId = () => {
 };
 
 // Sort helper function - More robust version
-const sortAlphabetically = (arr) => {
+const sortAlphabetically = (arr: any[]) => {
   return [...arr].sort((a, b) => {
     // Convert both to strings and handle null/undefined
     const strA = String(a || '');
@@ -1216,6 +1216,475 @@ function SeniorDiscountModal({
   );
 }
 
+// Standalone Manage Recipes Tab (used inside ManageModal for existing items without recipes)
+function ManageRecipesTab({
+  inventoryKeys,
+  itemsByCategory,
+  mergedRecipes,
+  onSaveRecipe,
+}: {
+  inventoryKeys: string[];
+  itemsByCategory: Record<string, string[]>;
+  mergedRecipes: Recipes;
+  onSaveRecipe: (itemName: string, sizes: Record<string, Record<string, number>>) => Promise<void>;
+}) {
+  const [recipeSelectedItem, setRecipeSelectedItem] = useState<string>("");
+  const [recipeIngredients, setRecipeIngredients] = useState<{ ingredient: string; medQty: string; lgQty: string }[]>([]);
+  const [recipeSaving, setRecipeSaving] = useState(false);
+  const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
+
+  const allItems = Object.entries(itemsByCategory).flatMap(([cat, items]) =>
+    items.map(name => ({ name, category: cat }))
+  );
+  const itemsWithoutRecipe = allItems.filter(({ name, category }) => {
+    const catLabel = category.split(" · ")[0];
+    return !mergedRecipes[`${catLabel} - ${name}`] && !mergedRecipes[name];
+  });
+
+  const handleSaveRecipe = async () => {
+    if (!recipeSelectedItem) {
+      setMessage({ text: "Please select an item first.", type: "error" });
+      setTimeout(() => setMessage(null), 2500);
+      return;
+    }
+    if (recipeIngredients.length === 0) {
+      setMessage({ text: "Add at least one ingredient.", type: "error" });
+      setTimeout(() => setMessage(null), 2500);
+      return;
+    }
+    for (const row of recipeIngredients) {
+      if (!row.ingredient || !row.medQty || parseFloat(row.medQty) <= 0) {
+        setMessage({ text: "Fill in all Medium quantities.", type: "error" });
+        setTimeout(() => setMessage(null), 2500);
+        return;
+      }
+    }
+    const mediumIngredients: Record<string, number> = {};
+    const largeIngredients: Record<string, number> = {};
+    recipeIngredients.forEach(row => {
+      mediumIngredients[row.ingredient] = parseFloat(row.medQty);
+      largeIngredients[row.ingredient] = row.lgQty && parseFloat(row.lgQty) > 0
+        ? parseFloat(row.lgQty) : parseFloat(row.medQty);
+    });
+    setRecipeSaving(true);
+    try {
+      await onSaveRecipe(recipeSelectedItem, { Medium: mediumIngredients, Large: largeIngredients });
+      setMessage({ text: `Recipe for "${recipeSelectedItem}" saved! ✓`, type: "success" });
+      setRecipeSelectedItem("");
+      setRecipeIngredients([]);
+      setTimeout(() => setMessage(null), 3000);
+    } catch {
+      setMessage({ text: "Failed to save. Try again.", type: "error" });
+      setTimeout(() => setMessage(null), 2500);
+    } finally {
+      setRecipeSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>
+          Items Without a Recipe
+        </label>
+        {itemsWithoutRecipe.length === 0 ? (
+          <div className="p-4 rounded-xl text-center text-sm" style={{ background: "#f0faf0", color: "#2d7a38", border: "1.5px solid #c8e6c9" }}>
+            ✓ All items already have recipes!
+          </div>
+        ) : (
+          <select
+            value={recipeSelectedItem}
+            onChange={(e) => { setRecipeSelectedItem(e.target.value); setRecipeIngredients([]); }}
+            className="w-full rounded-xl px-4 py-3 text-base outline-none min-h-[48px]"
+            style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
+          >
+            <option value="">— Select an item —</option>
+            {itemsWithoutRecipe.map(({ name, category }) => (
+              <option key={`${category}-${name}`} value={name}>{name} ({category})</option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      {recipeSelectedItem && (
+        <>
+          <div>
+            <div className="flex justify-between items-center mb-2">
+              <label className="text-sm font-semibold" style={{ color: "#3b2212" }}>Ingredients</label>
+              <button
+                onClick={() => setRecipeIngredients(prev => [...prev, { ingredient: inventoryKeys[0] || "", medQty: "", lgQty: "" }])}
+                className="px-4 py-2 rounded-lg text-sm font-semibold active:scale-95 touch-manipulation min-h-[36px]"
+                style={{ background: "#3b2212", color: "white" }}
+              >
+                + Add Ingredient
+              </button>
+            </div>
+            {recipeIngredients.length === 0 ? (
+              <p className="text-sm text-center py-4 rounded-xl" style={{ background: "#faf7f4", color: "#c0b090" }}>
+                Tap "+ Add Ingredient" to start building the recipe.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                <div className="grid grid-cols-12 gap-2 px-2 text-xs font-semibold" style={{ color: "#a07850" }}>
+                  <span className="col-span-5">Ingredient</span>
+                  <span className="col-span-3 text-center">Med qty</span>
+                  <span className="col-span-3 text-center">Lg qty</span>
+                  <span className="col-span-1" />
+                </div>
+                {recipeIngredients.map((row, idx) => (
+                  <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                    <div className="col-span-5">
+                      <select
+                        value={row.ingredient}
+                        onChange={(e) => setRecipeIngredients(prev => prev.map((r, i) => i === idx ? { ...r, ingredient: e.target.value } : r))}
+                        className="w-full rounded-lg px-2 py-2 text-sm outline-none min-h-[40px]"
+                        style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
+                      >
+                        {inventoryKeys.map(k => <option key={k} value={k}>{k}</option>)}
+                      </select>
+                    </div>
+                    <div className="col-span-3">
+                      <input type="number" value={row.medQty} placeholder="Med"
+                        onChange={(e) => setRecipeIngredients(prev => prev.map((r, i) => i === idx ? { ...r, medQty: e.target.value } : r))}
+                        className="w-full rounded-lg px-2 py-2 text-sm text-center outline-none min-h-[40px]"
+                        style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }} />
+                    </div>
+                    <div className="col-span-3">
+                      <input type="number" value={row.lgQty} placeholder="Lg (opt)"
+                        onChange={(e) => setRecipeIngredients(prev => prev.map((r, i) => i === idx ? { ...r, lgQty: e.target.value } : r))}
+                        className="w-full rounded-lg px-2 py-2 text-sm text-center outline-none min-h-[40px]"
+                        style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }} />
+                    </div>
+                    <div className="col-span-1 flex justify-center">
+                      <button onClick={() => setRecipeIngredients(prev => prev.filter((_, i) => i !== idx))}
+                        className="w-8 h-8 rounded-full flex items-center justify-center text-sm active:scale-95"
+                        style={{ background: "#fee2e2", color: "#c0392b" }}>✕</button>
+                    </div>
+                  </div>
+                ))}
+                <p className="text-xs" style={{ color: "#a07850" }}>Leave Lg blank to use same as Med.</p>
+              </div>
+            )}
+          </div>
+          <button
+            onClick={handleSaveRecipe}
+            disabled={recipeSaving || recipeIngredients.length === 0}
+            className="w-full py-4 rounded-xl font-semibold text-lg transition-all active:scale-95 touch-manipulation min-h-[52px]"
+            style={{
+              background: recipeSaving || recipeIngredients.length === 0 ? "#e8e0d8" : "#2d7a38",
+              color: recipeSaving || recipeIngredients.length === 0 ? "#b09070" : "white",
+              cursor: recipeSaving || recipeIngredients.length === 0 ? "not-allowed" : "pointer",
+            }}
+          >
+            {recipeSaving ? "Saving..." : `Save Recipe for "${recipeSelectedItem}"`}
+          </button>
+        </>
+      )}
+
+      {message && (
+        <div className={`p-3 rounded-xl text-center text-sm font-medium ${
+          message.type === "success" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"
+        }`}>
+          {message.text}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Generate Report Modal Component
+function GenerateReportModal({
+  isOpen,
+  onClose,
+  dateFilter,
+  onDateFilterChange,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  dateFilter: string;
+  onDateFilterChange: (filter: string) => void;
+}) {
+  const [orders, setOrders] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    
+    setLoading(true);
+    const q = query(collection(db, "orders"), orderBy("createdAt", "desc"));
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const records = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setOrders(records);
+        setLoading(false);
+      },
+      (error) => {
+        console.error("Error fetching orders:", error);
+        setLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [isOpen]);
+
+  const getFilteredOrders = () => {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfWeek = new Date(startOfToday);
+    startOfWeek.setDate(now.getDate() - now.getDay());
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    return orders.filter(o => {
+      if (!o.createdAt) return false;
+      const orderDate = o.createdAt.toDate ? o.createdAt.toDate() : new Date(o.createdAt);
+
+      if (dateFilter === "Today") {
+        return orderDate >= startOfToday;
+      } else if (dateFilter === "This Week") {
+        return orderDate >= startOfWeek;
+      } else if (dateFilter === "This Month") {
+        return orderDate >= startOfMonth;
+      }
+      return true;
+    });
+  };
+
+  const filteredOrders = getFilteredOrders();
+  const totalSales = filteredOrders.reduce((sum, o) => sum + (o.totalAmount || 0), 0);
+  const refundedAmount = filteredOrders
+    .filter(o => o.status === "refunded")
+    .reduce((sum, o) => sum + (o.totalAmount || 0), 0);
+  const completedCount = filteredOrders.filter(o => !o.status || o.status !== "refunded").length;
+  const refundedCount = filteredOrders.filter(o => o.status === "refunded").length;
+
+  const generatePDF = () => {
+    const now = new Date();
+    const dateStr = now.toLocaleString();
+    
+    let pdfContent = `
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; color: #3b2212; }
+    h1 { text-align: center; color: #3b2212; margin-bottom: 5px; }
+    .header-info { text-align: center; font-size: 12px; color: #a07850; margin-bottom: 20px; }
+    .summary { background: #faf7f4; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1.5px solid #e8ddd4; }
+    .summary-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-weight: bold; }
+    .summary-label { color: #a07850; }
+    .summary-value { color: #3b2212; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    thead { background: #3b2212; color: white; }
+    th { padding: 12px; text-align: left; font-size: 13px; border: 1px solid #3b2212; }
+    td { padding: 10px 12px; border-bottom: 1px solid #e8ddd4; font-size: 12px; }
+    tr:hover { background: #f7f3ef; }
+    .status-completed { background: #f0faf0; color: #2d7a38; padding: 4px 8px; border-radius: 4px; font-weight: bold; }
+    .status-refunded { background: #fee2e2; color: #c0392b; padding: 4px 8px; border-radius: 4px; font-weight: bold; }
+    .footer { margin-top: 30px; border-top: 2px solid #3b2212; padding-top: 15px; }
+    .footer-item { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 14px; font-weight: bold; }
+    .total { font-size: 18px; color: #3b2212; }
+  </style>
+</head>
+<body>
+  <h1>☕ Coffee & Tea Connection</h1>
+  <div class="header-info">
+    <p>Sales Report - ${dateFilter}</p>
+    <p>Generated on ${dateStr}</p>
+  </div>
+
+  <div class="summary">
+    <div class="summary-row">
+      <span class="summary-label">Total Orders:</span>
+      <span class="summary-value">${filteredOrders.length}</span>
+    </div>
+    <div class="summary-row">
+      <span class="summary-label">Completed:</span>
+      <span class="summary-value">${completedCount}</span>
+    </div>
+    <div class="summary-row">
+      <span class="summary-label">Refunded:</span>
+      <span class="summary-value">${refundedCount}</span>
+    </div>
+    <div class="summary-row" style="border-top: 1px solid #e8ddd4; padding-top: 8px;">
+      <span class="summary-label">Total Sales:</span>
+      <span class="summary-value">₱${totalSales.toFixed(2)}</span>
+    </div>
+    ${refundedAmount > 0 ? `
+    <div class="summary-row">
+      <span class="summary-label">Total Refunded:</span>
+      <span class="summary-value" style="color: #c0392b;">-₱${refundedAmount.toFixed(2)}</span>
+    </div>
+    ` : ''}
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Order ID</th>
+        <th>Date & Time</th>
+        <th>Items</th>
+        <th>Amount</th>
+        <th>Status</th>
+        <th>Barista</th>
+      </tr>
+    </thead>
+    <tbody>
+`;
+
+    filteredOrders.forEach(order => {
+      const orderDate = order.createdAt?.toDate ? order.createdAt.toDate() : new Date(order.createdAt);
+      const dateTime = orderDate.toLocaleString();
+      const itemCount = (order.items || []).length;
+      const statusClass = order.status === "refunded" ? "status-refunded" : "status-completed";
+      const statusText = order.status === "refunded" ? "REFUNDED" : "COMPLETED";
+
+      pdfContent += `
+      <tr>
+        <td>#${order.transactionNumber || order.id.substring(0, 8)}</td>
+        <td>${dateTime}</td>
+        <td>${itemCount} item(s)</td>
+        <td style="font-weight: bold;">₱${(order.totalAmount || 0).toFixed(2)}</td>
+        <td><span class="${statusClass}">${statusText}</span></td>
+        <td>${order.baristaName || "—"}</td>
+      </tr>
+`;
+    });
+
+    pdfContent += `
+    </tbody>
+  </table>
+
+  <div class="footer">
+    <div class="footer-item">
+      <span>Total Sales (${dateFilter}):</span>
+      <span class="total">₱${totalSales.toFixed(2)}</span>
+    </div>
+    ${refundedAmount > 0 ? `
+    <div class="footer-item">
+      <span>Total Refunded:</span>
+      <span class="total" style="color: #c0392b;">₱${refundedAmount.toFixed(2)}</span>
+    </div>
+    ` : ''}
+    <div class="footer-item" style="border-top: 1px solid #3b2212; padding-top: 10px; color: #a07850;">
+      <span>Net Sales:</span>
+      <span style="color: #3b2212; font-size: 20px;">₱${(totalSales - refundedAmount).toFixed(2)}</span>
+    </div>
+  </div>
+</body>
+</html>
+`;
+
+    const printWindow = window.open("", "", "width=800,height=600");
+    printWindow?.document.write(pdfContent);
+    printWindow?.document.close();
+    printWindow?.print();
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-50 p-4">
+      <div
+        className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden"
+        style={{ maxHeight: "90vh", overflowY: "auto" }}
+      >
+        <div className="p-6">
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-2xl font-bold" style={{ color: "#3b2212" }}>
+              Generate Sales Report
+            </h2>
+            <button
+              onClick={onClose}
+              className="w-12 h-12 rounded-full flex items-center justify-center text-xl active:scale-95 touch-manipulation"
+              style={{ background: "#f7f3ef", color: "#3b2212", border: "1px solid #e8ddd4", minHeight: "44px" }}
+            >
+              ✕
+            </button>
+          </div>
+
+          <div className="mb-6">
+            <label className="text-sm font-semibold block mb-3" style={{ color: "#3b2212" }}>
+              Select Date Range:
+            </label>
+            <div className="flex gap-3">
+              {["Today", "This Week", "This Month"].map((filter) => (
+                <button
+                  key={filter}
+                  onClick={() => onDateFilterChange(filter)}
+                  className={`flex-1 px-4 py-3 rounded-xl text-sm font-semibold transition-all active:scale-95 touch-manipulation min-h-[44px] ${
+                    dateFilter === filter
+                      ? "text-white"
+                      : "bg-white text-[#3b2212] border border-[#e8ddd4]"
+                  }`}
+                  style={{
+                    background: dateFilter === filter ? "#3b2212" : undefined,
+                  }}
+                >
+                  {filter}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {loading ? (
+            <div className="text-center py-12 text-[#a07850]">
+              <p>Loading orders...</p>
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-4 gap-3 mb-6">
+                <div className="bg-[#faf7f4] rounded-xl p-3 border border-[#e8ddd4]">
+                  <p className="text-xs text-[#a07850]">Total</p>
+                  <p className="text-xl font-bold text-[#3b2212]">{filteredOrders.length}</p>
+                </div>
+                <div className="bg-[#f0faf0] rounded-xl p-3 border border-[#c8e6c9]">
+                  <p className="text-xs text-[#2d7a38]">Completed</p>
+                  <p className="text-xl font-bold text-[#2d7a38]">{completedCount}</p>
+                </div>
+                <div className="bg-[#fee2e2] rounded-xl p-3 border border-[#f5c6c6]">
+                  <p className="text-xs text-[#c0392b]">Refunded</p>
+                  <p className="text-xl font-bold text-[#c0392b]">{refundedCount}</p>
+                </div>
+                <div className="bg-gradient-to-br from-[#3b2212] to-[#6b3f22] rounded-xl p-3 text-white">
+                  <p className="text-xs opacity-80">Total Sales</p>
+                  <p className="text-lg font-bold">₱{totalSales.toFixed(2)}</p>
+                </div>
+              </div>
+
+              {refundedAmount > 0 && (
+                <div className="bg-[#fee2e2] rounded-xl p-4 mb-6 border border-[#f5c6c6]">
+                  <p className="text-sm text-[#c0392b] font-semibold">
+                    Total Refunded: ₱{refundedAmount.toFixed(2)}
+                  </p>
+                  <p className="text-sm text-[#a07850] font-semibold">
+                    Net Sales: ₱{(totalSales - refundedAmount).toFixed(2)}
+                  </p>
+                </div>
+              )}
+            </>
+          )}
+
+          <button
+            onClick={generatePDF}
+            disabled={loading || filteredOrders.length === 0}
+            className="w-full py-4 rounded-xl font-semibold text-lg transition-all active:scale-95 touch-manipulation min-h-[52px]"
+            style={{
+              background:
+                loading || filteredOrders.length === 0 ? "#e8e0d8" : "#3b2212",
+              color: loading || filteredOrders.length === 0 ? "#b09070" : "white",
+              cursor:
+                loading || filteredOrders.length === 0 ? "not-allowed" : "pointer",
+            }}
+          >
+            Download PDF Report
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Manage Modal Component with alphabetical sorting
 function ManageModal({ 
   isOpen, 
@@ -1226,19 +1695,25 @@ function ManageModal({
   onDeleteItem,
   categories,
   itemsByCategory,
-  categoryColors: existingCategoryColors
+  categoryColors: existingCategoryColors,
+  inventoryStock,
+  mergedRecipes,
+  onSaveRecipe,
 }: { 
   isOpen: boolean; 
   onClose: () => void; 
   onAddCategory: (categoryName: string, color: string) => void; 
-  onAddItem: (item: { name: string; price: number; category: string }) => void;
+  onAddItem: (item: { name: string; price: number; category: string; isFood?: boolean; recipe?: { Medium: Record<string, number>; Large: Record<string, number> } }) => void;
   onDeleteCategory: (categoryName: string) => void;
   onDeleteItem: (categoryName: string, itemName: string) => void;
   categories: string[];
   itemsByCategory: Record<string, string[]>;
   categoryColors: Record<string, { bg: string; hoverBg: string; activeBg: string; text: string }>;
+  inventoryStock: Record<string, { quantity: number; unit: string; reorderLevel: number }>;
+  mergedRecipes: Recipes;
+  onSaveRecipe: (itemName: string, sizes: Record<string, Record<string, number>>) => Promise<void>;
 }) {
-  const [activeTab, setActiveTab] = useState<"category" | "item">("category");
+  const [activeTab, setActiveTab] = useState<"category" | "item" | "recipe">("category");
   const [categoryName, setCategoryName] = useState("");
   const [categoryColor, setCategoryColor] = useState("#3b2212");
   const [itemName, setItemName] = useState("");
@@ -1252,6 +1727,10 @@ function ManageModal({
     name: string;
     category?: string;
   }>({ isOpen: false, type: "category", name: "" });
+
+  // --- Inline Recipe Builder state (for Add Item tab) ---
+  const [newItemIngredients, setNewItemIngredients] = useState<{ ingredient: string; medQty: string; lgQty: string }[]>([]);
+  const [isItemFood, setIsItemFood] = useState(false);
 
   if (!isOpen) return null;
 
@@ -1290,36 +1769,85 @@ function ManageModal({
     setTimeout(() => setMessage(null), 2000);
   };
 
-  const handleAddItem = () => {
+  const inventoryKeys = sortAlphabetically(Object.keys(inventoryStock));
+
+  const handleAddIngredientRowForItem = () => {
+    setNewItemIngredients(prev => [...prev, { ingredient: inventoryKeys[0] || "", medQty: "", lgQty: "" }]);
+  };
+
+  const handleRemoveIngredientRowForItem = (idx: number) => {
+    setNewItemIngredients(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleIngredientChangeForItem = (idx: number, field: "ingredient" | "medQty" | "lgQty", value: string) => {
+    setNewItemIngredients(prev => prev.map((row, i) => i === idx ? { ...row, [field]: value } : row));
+  };
+
+  const handleAddItem = async () => {
     if (!itemName.trim()) {
       setMessage({ text: "Please enter an item name", type: "error" });
-      setTimeout(() => setMessage(null), 2000);
+      setTimeout(() => setMessage(null), 2500);
       return;
     }
     if (!itemPrice || parseFloat(itemPrice) <= 0) {
       setMessage({ text: "Please enter a valid price", type: "error" });
-      setTimeout(() => setMessage(null), 2000);
+      setTimeout(() => setMessage(null), 2500);
       return;
     }
     if (!selectedCategory) {
       setMessage({ text: "Please select a category", type: "error" });
-      setTimeout(() => setMessage(null), 2000);
+      setTimeout(() => setMessage(null), 2500);
       return;
     }
     if (itemsByCategory[selectedCategory]?.includes(itemName.trim())) {
       setMessage({ text: `Item "${itemName}" already exists in ${selectedCategory}!`, type: "error" });
-      setTimeout(() => setMessage(null), 2000);
+      setTimeout(() => setMessage(null), 2500);
       return;
     }
+
+    // Validate recipe if not food and ingredients were added
+    if (!isItemFood && newItemIngredients.length > 0) {
+      for (const row of newItemIngredients) {
+        if (!row.ingredient || !row.medQty || parseFloat(row.medQty) <= 0) {
+          setMessage({ text: "Please fill in all ingredient quantities.", type: "error" });
+          setTimeout(() => setMessage(null), 2500);
+          return;
+        }
+      }
+    }
+
+    // Save the item with recipe included
+    const recipe = (!isItemFood && newItemIngredients.length > 0) ? (() => {
+      const med: Record<string, number> = {};
+      const lg: Record<string, number> = {};
+      newItemIngredients.forEach(row => {
+        med[row.ingredient] = parseFloat(row.medQty);
+        lg[row.ingredient] = row.lgQty && parseFloat(row.lgQty) > 0
+          ? parseFloat(row.lgQty)
+          : parseFloat(row.medQty);
+      });
+      return { Medium: med, Large: lg };
+    })() : undefined;
+
     onAddItem({
       name: itemName.trim(),
       price: parseFloat(itemPrice),
       category: selectedCategory,
+      isFood: isItemFood,
+      recipe,
     });
-    setMessage({ text: `Item "${itemName}" added to ${selectedCategory}!`, type: "success" });
+
+    if (recipe) {
+      setMessage({ text: `"${itemName}" added with recipe! ✓`, type: "success" });
+    } else {
+      setMessage({ text: `Item "${itemName}" added to ${selectedCategory}!`, type: "success" });
+    }
+
     setItemName("");
     setItemPrice("");
-    setTimeout(() => setMessage(null), 2000);
+    setNewItemIngredients([]);
+    setIsItemFood(false);
+    setTimeout(() => setMessage(null), 3000);
   };
 
   const handleDeleteClick = (type: "category" | "item", name: string, category?: string) => {
@@ -1373,6 +1901,16 @@ function ManageModal({
                 }`}
               >
                 Add Item
+              </button>
+              <button
+                onClick={() => { setActiveTab("recipe"); setMessage(null); }}
+                className={`px-6 py-3 font-semibold transition-all min-h-[44px] ${
+                  activeTab === "recipe"
+                    ? "border-b-2 border-[#3b2212] text-[#3b2212]"
+                    : "text-[#a07850] hover:text-[#3b2212]"
+                }`}
+              >
+                Manage Recipes
               </button>
             </div>
 
@@ -1543,6 +2081,110 @@ function ManageModal({
                   </p>
                 </div>
 
+                {/* Recipe Builder — embedded in Add Item */}
+                <div className="pt-3 border-t" style={{ borderColor: "#e8ddd4" }}>
+                  <div className="flex justify-between items-center mb-3">
+                    <label className="text-sm font-semibold" style={{ color: "#3b2212" }}>
+                      Recipe / Ingredients
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <span className="text-xs" style={{ color: "#a07850" }}>Food item (no recipe)</span>
+                      <div
+                        onClick={() => { setIsItemFood(v => !v); setNewItemIngredients([]); }}
+                        className="w-10 h-5 rounded-full transition-all relative"
+                        style={{ background: isItemFood ? "#2d7a38" : "#e8ddd4" }}
+                      >
+                        <div
+                          className="w-4 h-4 rounded-full bg-white absolute top-0.5 transition-all"
+                          style={{ left: isItemFood ? "22px" : "2px" }}
+                        />
+                      </div>
+                    </label>
+                  </div>
+
+                  {isItemFood ? (
+                    <div className="p-3 rounded-xl text-sm text-center" style={{ background: "#f0faf0", color: "#2d7a38", border: "1.5px solid #c8e6c9" }}>
+                      ✓ Food item — no recipe needed. Stock won't be deducted on checkout.
+                    </div>
+                  ) : (
+                    <>
+                      {inventoryKeys.length === 0 ? (
+                        <p className="text-xs" style={{ color: "#c0392b" }}>No inventory items found. Add inventory items first.</p>
+                      ) : (
+                        <>
+                          {newItemIngredients.length === 0 ? (
+                            <p className="text-sm text-center py-3 rounded-xl mb-2" style={{ background: "#faf7f4", color: "#c0b090" }}>
+                              No ingredients yet — tap below to add.
+                            </p>
+                          ) : (
+                            <div className="space-y-2 mb-2">
+                              <div className="grid grid-cols-12 gap-1 px-1 text-xs font-semibold" style={{ color: "#a07850" }}>
+                                <span className="col-span-5">Ingredient</span>
+                                <span className="col-span-3 text-center">Med qty</span>
+                                <span className="col-span-3 text-center">Lg qty</span>
+                                <span className="col-span-1" />
+                              </div>
+                              {newItemIngredients.map((row, idx) => (
+                                <div key={idx} className="grid grid-cols-12 gap-1 items-center">
+                                  <div className="col-span-5">
+                                    <select
+                                      value={row.ingredient}
+                                      onChange={(e) => handleIngredientChangeForItem(idx, "ingredient", e.target.value)}
+                                      className="w-full rounded-lg px-2 py-2 text-xs outline-none min-h-[38px]"
+                                      style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
+                                    >
+                                      {inventoryKeys.map(key => (
+                                        <option key={key} value={key}>{key}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  <div className="col-span-3">
+                                    <input
+                                      type="number"
+                                      value={row.medQty}
+                                      onChange={(e) => handleIngredientChangeForItem(idx, "medQty", e.target.value)}
+                                      placeholder="Med"
+                                      className="w-full rounded-lg px-2 py-2 text-xs text-center outline-none min-h-[38px]"
+                                      style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
+                                    />
+                                  </div>
+                                  <div className="col-span-3">
+                                    <input
+                                      type="number"
+                                      value={row.lgQty}
+                                      onChange={(e) => handleIngredientChangeForItem(idx, "lgQty", e.target.value)}
+                                      placeholder="Lg"
+                                      className="w-full rounded-lg px-2 py-2 text-xs text-center outline-none min-h-[38px]"
+                                      style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
+                                    />
+                                  </div>
+                                  <div className="col-span-1 flex justify-center">
+                                    <button
+                                      onClick={() => handleRemoveIngredientRowForItem(idx)}
+                                      className="w-7 h-7 rounded-full flex items-center justify-center text-xs active:scale-95"
+                                      style={{ background: "#fee2e2", color: "#c0392b" }}
+                                    >✕</button>
+                                  </div>
+                                </div>
+                              ))}
+                              <p className="text-xs" style={{ color: "#a07850" }}>
+                                Leave Lg qty blank to use same amount as Med.
+                              </p>
+                            </div>
+                          )}
+                          <button
+                            onClick={handleAddIngredientRowForItem}
+                            className="w-full py-2 rounded-xl text-sm font-semibold active:scale-95 touch-manipulation min-h-[40px] transition-all"
+                            style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px dashed #c8b090" }}
+                          >
+                            + Add Ingredient
+                          </button>
+                        </>
+                      )}
+                    </>
+                  )}
+                </div>
+
                 <button
                   onClick={handleAddItem}
                   className="w-full py-4 rounded-xl font-semibold text-lg transition-all active:scale-95 touch-manipulation min-h-[52px]"
@@ -1600,6 +2242,15 @@ function ManageModal({
                 </div>
               </div>
             )}
+
+            {activeTab === "recipe" && (
+              <ManageRecipesTab
+                inventoryKeys={inventoryKeys}
+                itemsByCategory={itemsByCategory}
+                mergedRecipes={mergedRecipes}
+                onSaveRecipe={onSaveRecipe}
+              />
+            )}
           </div>
         </div>
       </div>
@@ -1629,10 +2280,11 @@ function ManageModal({
 }
 
 export default function POSLayout() {
-  const { user, loading, logout } = useAuth();
+  const { user, loading, logout, userRole } = useAuth();
   const router = useRouter();
 
   const [inventoryStock, setInventoryStock] = useState<Record<string, { quantity: number; unit: string; reorderLevel: number }>>({});
+  const [dynamicRecipes, setDynamicRecipes] = useState<Recipes>({});
 
   useEffect(() => {
     if (!loading && !user) router.push("/");
@@ -1655,6 +2307,91 @@ export default function POSLayout() {
     });
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    const itemUnsubscribes: Map<string, () => void> = new Map();
+
+    const catUnsub = onSnapshot(collection(db, "categories"), (catSnap) => {
+      // Unsubscribe removed categories
+      const currentIds = new Set(catSnap.docs.map(d => d.id));
+      itemUnsubscribes.forEach((unsub, catId) => {
+        if (!currentIds.has(catId)) {
+          unsub();
+          itemUnsubscribes.delete(catId);
+        }
+      });
+
+      catSnap.docs.forEach((catDoc) => {
+        const catData = catDoc.data();
+        if (!catData.name) return;
+        if (itemUnsubscribes.has(catDoc.id)) return; // already listening
+
+        const catName = catData.name as string;
+
+        const itemUnsub = onSnapshot(collection(db, "categories", catDoc.id, "menuItems"), (itemSnap) => {
+          const newProducts: string[] = [];
+          const newPrices: Record<string, { M: number; L: number }> = {};
+          const newColors: Record<string, { bg: string; activeBg: string; text: string }> = {};
+          const newRecipes: Recipes = {};
+
+          itemSnap.docs.forEach((itemDoc) => {
+            const data = itemDoc.data();
+            if (!data.name) return;
+            newProducts.push(data.name);
+            newPrices[data.name] = {
+              M: data.prices?.medium || 0,
+              L: data.prices?.large || 0,
+            };
+            const color = categoryColors[catName]?.activeBg || catData.color || "#3b2212";
+            newColors[data.name] = { bg: `${color}20`, activeBg: color, text: color };
+            if (data.recipes && Object.keys(data.recipes).length > 0) {
+              newRecipes[data.name] = data.recipes;
+            }
+          });
+
+          setDynamicProducts(prev => ({
+            ...prev,
+            [catName]: sortAlphabetically(newProducts),
+          }));
+          setDynamicPrices(prev => ({ ...prev, ...newPrices }));
+          setDynamicItemColors(prev => ({ ...prev, ...newColors }));
+          setDynamicRecipes(prev => ({ ...prev, ...newRecipes }));
+        });
+
+        itemUnsubscribes.set(catDoc.id, itemUnsub);
+      });
+    });
+
+    return () => {
+      catUnsub();
+      itemUnsubscribes.forEach(u => u());
+    };
+  }, []);
+
+  // Load dynamic categories from Firestore
+  useEffect(() => {
+    const unsubscribe = onSnapshot(collection(db, "categories"), (snapshot) => {
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        if (data.name && data.color) {
+          const color = data.color;
+          setDynamicProducts(prev => ({
+            ...prev,
+            [data.name]: prev[data.name] || [],
+          }));
+          categoryColors[data.name] = {
+            bg: `${color}20`,
+            hoverBg: `${color}30`,
+            activeBg: color,
+            text: color,
+          };
+        }
+      });
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // menu items are now loaded via categories subcollection listener above
 
   const handleLogout = async () => {
     await logout();
@@ -1704,6 +2441,8 @@ export default function POSLayout() {
   // New states for separate modals
   const [pwdModalOpen, setPwdModalOpen] = useState(false);
   const [seniorModalOpen, setSeniorModalOpen] = useState(false);
+  const [isGenerateReportModalOpen, setIsGenerateReportModalOpen] = useState(false);
+  const [reportDateFilter, setReportDateFilter] = useState("Today");
 
   const [dynamicProducts, setDynamicProducts] = useState<Record<string, string[]>>({});
   const [dynamicPrices, setDynamicPrices] = useState<Record<string, { M: number; L: number }>>({});
@@ -1876,12 +2615,12 @@ export default function POSLayout() {
 
   const allProducts: Record<string, string[]> = { ...products };
   
-  // Sort dynamic products alphabetically as well
+  // If a category has items in Firestore subcollection, use ONLY those (no merging to avoid duplicates)
   Object.keys(dynamicProducts).forEach(cat => {
-    if (allProducts[cat]) {
-      allProducts[cat] = sortAlphabetically([...allProducts[cat], ...dynamicProducts[cat]]);
-    } else {
+    if (dynamicProducts[cat].length > 0) {
       allProducts[cat] = sortAlphabetically(dynamicProducts[cat]);
+    } else if (!allProducts[cat]) {
+      allProducts[cat] = [];
     }
   });
   
@@ -2011,79 +2750,104 @@ export default function POSLayout() {
 
   const ADD_ON_PRICE = 30;
 
-  const handleAddCategory = (categoryName: string, color: string) => {
-    setDynamicProducts(prev => ({
-      ...prev,
-      [categoryName]: []
-    }));
-    
+  const handleAddCategory = async (categoryName: string, color: string) => {
     const bgColor = `${color}20`;
     const hoverBgColor = `${color}30`;
-    
-    categoryColors[categoryName] = { 
-      bg: bgColor, 
-      hoverBg: hoverBgColor, 
-      activeBg: color, 
-      text: color 
-    };
+    categoryColors[categoryName] = { bg: bgColor, hoverBg: hoverBgColor, activeBg: color, text: color };
+
+    // Save to Firestore
+    try {
+      await addDoc(collection(db, "categories"), {
+        name: categoryName,
+        color,
+        createdAt: serverTimestamp(),
+      });
+    } catch (err) {
+      console.error("Failed to save category:", err);
+    }
   };
 
-  const handleAddItem = (item: { name: string; price: number; category: string }) => {
+  const handleAddItem = async (item: { name: string; price: number; category: string; isFood?: boolean; recipe?: { Medium: Record<string, number>; Large: Record<string, number> } }) => {
+    const categoryColor = categoryColors[item.category]?.activeBg || "#3b2212";
+
+    // Optimistic local update
     setDynamicProducts(prev => ({
       ...prev,
       [item.category]: sortAlphabetically([...(prev[item.category] || []), item.name])
     }));
-    
     setDynamicPrices(prev => ({
       ...prev,
       [item.name]: { M: item.price, L: item.price + 20 }
     }));
-    
-    const categoryColor = categoryColors[item.category]?.activeBg || "#3b2212";
-    
     setDynamicItemColors(prev => ({
       ...prev,
-      [item.name]: { 
-        bg: `${categoryColor}20`, 
-        activeBg: categoryColor,
-        text: categoryColor 
-      }
+      [item.name]: { bg: `${categoryColor}20`, activeBg: categoryColor, text: categoryColor }
     }));
+
+    // Save to categories/{categoryId}/menuItems/{slug}
+    try {
+      const slug = item.name.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+      const catQuery = query(collection(db, "categories"), where("name", "==", item.category));
+      const catSnap = await getDocs(catQuery);
+
+      if (catSnap.empty) {
+        console.error("Category not found in Firestore:", item.category);
+        return;
+      }
+
+      const categoryDocId = catSnap.docs[0].id;
+      const menuItemRef = doc(db, "categories", categoryDocId, "menuItems", slug);
+      await setDoc(menuItemRef, {
+        name: item.name,
+        categoryName: item.category,
+        prices: {
+          medium: item.price,
+          large: item.price + 20,
+        },
+        recipes: item.recipe || {},
+        hasRecipes: !!(item.recipe && Object.keys(item.recipe.Medium || {}).length > 0),
+        isFood: item.isFood || false,
+        status: "active",
+        subcategory: null,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      console.error("Failed to save item:", err);
+    }
   };
 
-  const handleDeleteCategory = (categoryName: string) => {
+  const handleDeleteCategory = async (categoryName: string) => {
     const defaultCategories = ["Coffee", "Non Coffee", "Milktea", "Yakult Mix", "Fruit Tea", "Hot Tea", "Frappe", "Food & Bites"];
     if (defaultCategories.includes(categoryName)) {
       alert("Cannot delete default categories!");
       return;
     }
-    
+
     const itemsToRemove = [...(dynamicProducts[categoryName] || [])];
-    
-    setDynamicProducts(prev => {
-      const newProducts = { ...prev };
-      delete newProducts[categoryName];
-      return newProducts;
-    });
-    
-    setDynamicPrices(prev => {
-      const newPrices = { ...prev };
-      itemsToRemove.forEach(item => {
-        delete newPrices[item];
-      });
-      return newPrices;
-    });
-    
-    setDynamicItemColors(prev => {
-      const newColors = { ...prev };
-      itemsToRemove.forEach(item => {
-        delete newColors[item];
-      });
-      return newColors;
-    });
+
+    setDynamicProducts(prev => { const n = { ...prev }; delete n[categoryName]; return n; });
+    setDynamicPrices(prev => { const n = { ...prev }; itemsToRemove.forEach(i => delete n[i]); return n; });
+    setDynamicItemColors(prev => { const n = { ...prev }; itemsToRemove.forEach(i => delete n[i]); return n; });
+
+    // Delete from Firestore — deleting the category doc also removes subcollection access,
+    // but we explicitly delete menuItems subcollection docs first
+    try {
+      const q = query(collection(db, "categories"), where("name", "==", categoryName));
+      const snap = await getDocs(q);
+      for (const catDoc of snap.docs) {
+        // Delete all menuItems in subcollection first
+        const menuItemsSnap = await getDocs(collection(db, "categories", catDoc.id, "menuItems"));
+        menuItemsSnap.forEach(d => deleteDoc(d.ref));
+        // Then delete the category doc itself
+        await deleteDoc(catDoc.ref);
+      }
+    } catch (err) {
+      console.error("Failed to delete category:", err);
+    }
   };
 
-  const handleDeleteItem = (categoryName: string, itemName: string) => {
+  const handleDeleteItem = async (categoryName: string, itemName: string) => {
     const defaultItems = [
       "Americano", "Cappuccino", "Hazelnut", "Caramel Macchiato", "Mocha", "Spanish Latte", "Salted Caramel Latte", "Dirty Matcha", "Vanilla Latte",
       "Choco", "Dark Choco", "Matcha latte", "Salted Caramel", "Caramel",
@@ -2093,28 +2857,31 @@ export default function POSLayout() {
       "Cheesecake", "Empanada", "Muffin", "Cookies", "Popcorn", "Pancake (Dessert)",
       "Tapa", "Bangus", "Spam", "Hotdog", "Ham", "Longganisa", "Spaghetti", "Tuna Pesto", "Vegetable Salad"
     ];
-    
+
     if (defaultItems.includes(itemName)) {
       alert("Cannot delete default items!");
       return;
     }
-    
+
     setDynamicProducts(prev => ({
       ...prev,
       [categoryName]: prev[categoryName]?.filter(item => item !== itemName) || []
     }));
-    
-    setDynamicPrices(prev => {
-      const newPrices = { ...prev };
-      delete newPrices[itemName];
-      return newPrices;
-    });
-    
-    setDynamicItemColors(prev => {
-      const newColors = { ...prev };
-      delete newColors[itemName];
-      return newColors;
-    });
+    setDynamicPrices(prev => { const n = { ...prev }; delete n[itemName]; return n; });
+    setDynamicItemColors(prev => { const n = { ...prev }; delete n[itemName]; return n; });
+
+    // Delete from subcollection
+    try {
+      const slug = itemName.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+      const catQuery = query(collection(db, "categories"), where("name", "==", categoryName));
+      const catSnap = await getDocs(catQuery);
+      if (!catSnap.empty) {
+        const categoryDocId = catSnap.docs[0].id;
+        await deleteDoc(doc(db, "categories", categoryDocId, "menuItems", slug));
+      }
+    } catch (err) {
+      console.error("Failed to delete item:", err);
+    }
   };
 
   const getDrinkPrice = (productName: string, size: string, category: string, frappeType: string | null): number => {
@@ -2199,6 +2966,11 @@ export default function POSLayout() {
   const sortedFrappeTypes = sortAlphabetically(Object.keys(frappeProducts));
 
   // ---------------------------------------------------------
+  // MERGED RECIPES: hardcoded + Firestore dynamic
+  // ---------------------------------------------------------
+  const mergedRecipes: Recipes = { ...RECIPES, ...dynamicRecipes };
+
+  // ---------------------------------------------------------
   // RESERVED STOCK & STOCK CHECKER
   // ---------------------------------------------------------
   const alreadyInCartReserved: Record<string, number> = {};
@@ -2207,7 +2979,7 @@ export default function POSLayout() {
       const cSizeKey = cartItem.size === "Large" ? "Large" : "Medium";
       const catLabel = cartItem.category.split(" · ")[0];
       const cSpecificRecipeKey = `${catLabel} - ${cartItem.name}`;
-      const cRecipe = RECIPES[cSpecificRecipeKey]?.[cSizeKey] || RECIPES[cartItem.name]?.[cSizeKey];
+      const cRecipe = mergedRecipes[cSpecificRecipeKey]?.[cSizeKey] || mergedRecipes[cartItem.name]?.[cSizeKey];
       
       if (cRecipe) {
         Object.entries(cRecipe).forEach(([ing, amt]) => {
@@ -2225,7 +2997,7 @@ export default function POSLayout() {
   const getItemStockStatus = (item: string, categoryLabel?: string): "Available" | "Low Stock" | "Not Available" | "No Ingredients" => {
     const catLabel = categoryLabel ? categoryLabel.split(" · ")[0] : "";
     const specificRecipeKey = `${catLabel} - ${item}`;
-    const recipe = RECIPES[specificRecipeKey]?.["Medium"] || RECIPES[item]?.["Medium"];
+    const recipe = mergedRecipes[specificRecipeKey]?.["Medium"] || mergedRecipes[item]?.["Medium"];
     
     if (!recipe) {
       if (catLabel === "Food & Bites") return "Available"; 
@@ -2261,7 +3033,7 @@ export default function POSLayout() {
     const catLabel = selectedProductCategory.split(" · ")[0];
     const specificRecipeKey = `${catLabel} - ${selectedProduct}`;
     
-    const recipe = RECIPES[specificRecipeKey]?.[sizeKey] || RECIPES[selectedProduct]?.[sizeKey]; 
+    const recipe = mergedRecipes[specificRecipeKey]?.[sizeKey] || mergedRecipes[selectedProduct]?.[sizeKey]; 
     
     if (recipe) {
       Object.entries(recipe).forEach(([ingredientName, amount]) => {
@@ -2452,7 +3224,7 @@ export default function POSLayout() {
         const sizeKey = item.size === "Large" ? "Large" : "Medium";
         const catLabel = item.category.split(" · ")[0];
         const specificRecipeKey = `${catLabel} - ${item.name}`;
-        const recipe = RECIPES[specificRecipeKey]?.[sizeKey] || RECIPES[item.name]?.[sizeKey]; 
+        const recipe = mergedRecipes[specificRecipeKey]?.[sizeKey] || mergedRecipes[item.name]?.[sizeKey]; 
         
         if (recipe) {
           Object.entries(recipe).forEach(([ingredientName, amount]) => {
@@ -2620,6 +3392,37 @@ export default function POSLayout() {
   const baseCategory = selectedProductCategory ? selectedProductCategory.split(" · ")[0] : "";
   const allowedAddOns = CATEGORY_ADD_ONS[baseCategory] || [];
 
+  const handleSaveRecipe = async (itemName: string, sizes: Record<string, Record<string, number>>) => {
+    try {
+      const slug = itemName.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+      // Find which category this item belongs to — check all products including hardcoded
+      const allCats = Object.keys(allProducts);
+      let categoryName = "";
+      for (const cat of allCats) {
+        if (allProducts[cat]?.includes(itemName)) {
+          categoryName = cat;
+          break;
+        }
+      }
+      if (!categoryName) throw new Error("Category not found for: " + itemName);
+
+      const catQuery = query(collection(db, "categories"), where("name", "==", categoryName));
+      const catSnap = await getDocs(catQuery);
+      if (catSnap.empty) throw new Error("Category doc not found");
+
+      const categoryDocId = catSnap.docs[0].id;
+      const menuItemRef = doc(db, "categories", categoryDocId, "menuItems", slug);
+      await updateDoc(menuItemRef, {
+        recipes: sizes,
+        hasRecipes: true,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      console.error("Failed to save recipe:", err);
+      throw err;
+    }
+  };
+
   if (loading) return <div>Loading...</div>;
   if (!user) return <div>Redirecting to login...</div>;
 
@@ -2700,6 +3503,7 @@ export default function POSLayout() {
               </button>
             </div>
             
+            {(userRole === "admin" || userRole === "manager") && (
             <button
               onClick={() => setIsManageModalOpen(true)}
               className="shrink-0 ml-3 px-4 py-2 rounded-lg text-sm font-medium transition-all hover:bg-[#e8e0d8] border border-[#e8ddd4] bg-white whitespace-nowrap flex items-center gap-2 min-h-[44px]"
@@ -2712,6 +3516,17 @@ export default function POSLayout() {
                 className="w-5 h-5"
               />
               Manage Menu
+            </button>
+            )}
+
+            <button
+              onClick={() => setIsGenerateReportModalOpen(true)}
+              className="shrink-0 ml-3 px-4 py-2 rounded-lg text-sm font-medium transition-all hover:bg-[#e8e0d8] border border-[#e8ddd4] bg-white whitespace-nowrap flex items-center gap-2 min-h-[44px]"
+              style={{ color: "#5a3d28" }}
+              title="Generate Sales Report"
+            >
+              
+              Generate Report
             </button>
           </div>
         </div>
@@ -3062,11 +3877,11 @@ export default function POSLayout() {
     <button
   onClick={() => {
     if (orderItems.length === 0) return;
-    if (bulkDiscount === "PWD") {
+    if ((bulkDiscount as string) === "PWD") {
       updateActiveTabBulkDiscount("None");
       const newOrderItems = orderItems.map(item => ({
         ...item,
-        discountType: "None",
+        discountType: "None" as const,
         discountCustomerName: "",
         discountCustomerID: ""
       }));
@@ -3076,7 +3891,7 @@ export default function POSLayout() {
         updateActiveTabBulkDiscount("None");
         const newOrderItems = orderItems.map(item => ({
           ...item,
-          discountType: "None",
+          discountType: "None" as const,
           discountCustomerName: "",
           discountCustomerID: ""
         }));
@@ -3087,8 +3902,8 @@ export default function POSLayout() {
   }}
   className="flex-1 py-3 rounded-xl font-semibold transition-all active:scale-95 touch-manipulation min-h-[48px] text-sm"
   style={{
-    background: bulkDiscount === "PWD" ? "#2d7a38" : "#faf7f4",
-    color: bulkDiscount === "PWD" ? "white" : "#3b2212",
+    background: (bulkDiscount as string) === "PWD" ? "#2d7a38" : "#faf7f4",
+    color: (bulkDiscount as string) === "PWD" ? "white" : "#3b2212",
     border: "1.5px solid #e8ddd4"
   }}
 >
@@ -3098,13 +3913,13 @@ export default function POSLayout() {
     <button
   onClick={() => {
     if (orderItems.length === 0) return;
-    if (bulkDiscount === "Senior") {
+    if ((bulkDiscount as string) === "Senior") {
       // Turn off bulk Senior discount
       updateActiveTabBulkDiscount("None");
       // Remove Senior from all items
       const newOrderItems = orderItems.map(item => ({
         ...item,
-        discountType: "None",
+        discountType: "None" as const,
         discountCustomerName: "",
         discountCustomerID: ""
       }));
@@ -3116,7 +3931,7 @@ export default function POSLayout() {
         // Remove any existing bulk discounts from items
         const newOrderItems = orderItems.map(item => ({
           ...item,
-          discountType: "None",
+          discountType: "None" as const,
           discountCustomerName: "",
           discountCustomerID: ""
         }));
@@ -3129,8 +3944,8 @@ export default function POSLayout() {
   className="flex-1 py-3 rounded-xl font-semibold transition-all active:scale-95 touch-manipulation min-h-[48px] text-sm"
   style={{
     // ONLY check bulkDiscount, NOT item.discountType
-    background: bulkDiscount === "Senior" ? "#e67e22" : "#faf7f4",
-    color: bulkDiscount === "Senior" ? "white" : "#3b2212",
+    background: (bulkDiscount as string) === "Senior" ? "#e67e22" : "#faf7f4",
+    color: (bulkDiscount as string) === "Senior" ? "white" : "#3b2212",
     border: "1.5px solid #e8ddd4"
   }}
 >
@@ -3215,11 +4030,11 @@ export default function POSLayout() {
           onApply={(name, id) => {
             const newOrderItems = orderItems.map(item => ({
               ...item,
-              discountType: "PWD",
+              discountType: "PWD" as const,
               discountCustomerName: name,
               discountCustomerID: id
             }));
-            updateActiveTabOrderItems(newOrderItems);
+            updateActiveTabOrderItems(newOrderItems as any);
             updateActiveTabBulkDiscount("None");
             setPwdModalOpen(false);
           }}
@@ -3237,11 +4052,11 @@ export default function POSLayout() {
           onApply={(name, id) => {
             const newOrderItems = orderItems.map(item => ({
               ...item,
-              discountType: "Senior",
+              discountType: "Senior" as const,
               discountCustomerName: name,
               discountCustomerID: id
             }));
-            updateActiveTabOrderItems(newOrderItems);
+            updateActiveTabOrderItems(newOrderItems as any);
             updateActiveTabBulkDiscount("None");
             setSeniorModalOpen(false);
           }}
@@ -3261,6 +4076,16 @@ export default function POSLayout() {
         categories={sortedAllCategories}
         itemsByCategory={allProducts}
         categoryColors={categoryColors}
+        inventoryStock={inventoryStock}
+        mergedRecipes={mergedRecipes}
+        onSaveRecipe={handleSaveRecipe}
+      />
+
+      <GenerateReportModal
+        isOpen={isGenerateReportModalOpen}
+        onClose={() => setIsGenerateReportModalOpen(false)}
+        dateFilter={reportDateFilter}
+        onDateFilterChange={setReportDateFilter}
       />
 
       {/* Confirmation Modal */}

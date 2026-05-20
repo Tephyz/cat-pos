@@ -2,12 +2,22 @@
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { User, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updateProfile } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { auth } from '@/lib/firebase';
 import { db } from '@/lib/firebase';
 
+interface UserData {
+  fullname?: string;
+  username?: string;
+  email?: string;
+  role?: string;
+  status?: string;
+}
+
 interface AuthContextType {
   user: User | null;
+  userData: UserData | null;
+  userRole: string;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, displayName: string, fullname: string, username: string) => Promise<void>;
@@ -30,15 +40,49 @@ interface AuthProviderProps {
 
 export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [user, setUser] = useState<User | null>(null);
+  const [userData, setUserData] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user);
-      setLoading(false);
+    let unsubscribeFirestore: (() => void) | null = null;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
+      setUser(firebaseUser);
+
+      // Clean up previous Firestore listener
+      if (unsubscribeFirestore) {
+        unsubscribeFirestore();
+        unsubscribeFirestore = null;
+      }
+
+      if (firebaseUser) {
+        // Real-time listener on the user's Firestore document
+        unsubscribeFirestore = onSnapshot(
+          doc(db, "users", firebaseUser.uid),
+          (snap) => {
+            if (snap.exists()) {
+              setUserData(snap.data() as UserData);
+            } else {
+              setUserData(null);
+            }
+            setLoading(false);
+          },
+          () => {
+            // On error, still stop loading
+            setUserData(null);
+            setLoading(false);
+          }
+        );
+      } else {
+        setUserData(null);
+        setLoading(false);
+      }
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeFirestore) unsubscribeFirestore();
+    };
   }, []);
 
   const signIn = async (email: string, password: string) => {
@@ -67,8 +111,12 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     await signOut(auth);
   };
 
+  const userRole = (userData?.role ?? "").toLowerCase();
+
   const value = {
     user,
+    userData,
+    userRole,
     loading,
     signIn,
     signUp,

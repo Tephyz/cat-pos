@@ -132,7 +132,7 @@ export default function SigninPage() {
                 type="text"
                 value={form.username}
                 onChange={handleChange}
-                placeholder="e.g. jdoe"
+                placeholder="Enter your username"
                 required
                 className="w-full rounded-lg px-5 py-4 md:py-3 border border-gray-300 bg-white text-gray-900 text-base outline-none transition duration-300 focus:ring-2 focus:ring-offset-1 focus:ring-[#C9A66B] focus:border-transparent"
                 autoComplete="off"

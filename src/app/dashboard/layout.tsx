@@ -22,10 +22,11 @@ const navItems = [
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
 
-  const { user, loading, logout } = useAuth();
+  const { user, loading, logout, userRole, userData } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) router.push("/");
@@ -37,6 +38,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, []);
 
   const handleLogout = async () => {
+    setIsLogoutModalOpen(false);
     await logout();
     router.push("/");
   };
@@ -67,14 +69,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm"
             style={{ background: "#f7f3ef", color: "#3b2212" }}
           >
-            {(user?.displayName || "U")[0].toUpperCase()}
+            {(userData?.fullname || user?.displayName || "U")[0].toUpperCase()}
           </div>
           <div>
             <p className="text-white font-medium text-sm">
-              {user?.displayName || "User"}
+              {userData?.fullname || user?.displayName || "User"}
             </p>
-            <p className="text-xs" style={{ color: "#d4a97a" }}>
-              Barista
+            <p className="text-xs capitalize" style={{ color: "#d4a97a" }}>
+              {userRole || "—"}
             </p>
           </div>
         </div>
@@ -114,7 +116,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
           {/* LOGOUT */}
           <button
-            onClick={handleLogout}
+            onClick={() => setIsLogoutModalOpen(true)}
             className="px-4 py-2 rounded-xl text-sm font-semibold"
             style={{ background: "#c0392b", color: "white" }}
           >
@@ -128,6 +130,36 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <main className="flex-1 min-h-0 h-full">
         {children}
       </main>
+
+      {/* LOGOUT CONFIRMATION MODAL */}
+      {isLogoutModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-lg">
+            <h2 className="text-lg font-bold mb-2" style={{ color: "#3b2212" }}>
+              Confirm Logout
+            </h2>
+            <p className="text-gray-600 mb-6 text-sm">
+              Are you sure you want to logout?
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setIsLogoutModalOpen(false)}
+                className="flex-1 py-2 rounded-lg font-semibold transition-all"
+                style={{ background: "#f0e8e0", color: "#3b2212" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleLogout}
+                className="flex-1 py-2 rounded-lg font-semibold text-white transition-all"
+                style={{ background: "#c0392b" }}
+              >
+                Logout
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

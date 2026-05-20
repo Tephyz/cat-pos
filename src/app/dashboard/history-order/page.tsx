@@ -275,6 +275,9 @@ export default function OrderHistoryPage() {
   
   // NEW: State for Non-Cash restriction modal
   const [showNonCashRestrictionModal, setShowNonCashRestrictionModal] = useState<OrderRecord | null>(null);
+  
+  // DYNAMIC RECIPES STATE
+  const [dynamicRecipes, setDynamicRecipes] = useState<Record<string, Record<string, Record<string, number>>>>({});
 
   useEffect(() => {
     if (!loading && !user) {
@@ -295,100 +298,239 @@ export default function OrderHistoryPage() {
     }
   }, [user, loading, router]);
 
-  // Modified refund handler - now called only for Cash orders
+  // DATABASE RECIPE LISTENER
+  useEffect(() => {
+    const itemUnsubscribes: Map<string, () => void> = new Map();
+
+    const catUnsub = onSnapshot(collection(db, "categories"), (catSnap) => {
+      const currentIds = new Set(catSnap.docs.map(d => d.id));
+      itemUnsubscribes.forEach((unsub, catId) => {
+        if (!currentIds.has(catId)) {
+          unsub();
+          itemUnsubscribes.delete(catId);
+        }
+      });
+
+      catSnap.docs.forEach((catDoc) => {
+        const catData = catDoc.data();
+        if (!catData.name) return;
+        if (itemUnsubscribes.has(catDoc.id)) return; 
+
+        const itemUnsub = onSnapshot(collection(db, "categories", catDoc.id, "menuItems"), (itemSnap) => {
+          const newRecipes: Record<string, Record<string, Record<string, number>>> = {};
+
+          itemSnap.docs.forEach((itemDoc) => {
+            const data = itemDoc.data();
+            if (!data.name) return;
+            if (data.recipes && Object.keys(data.recipes).length > 0) {
+              newRecipes[data.name] = data.recipes;
+            }
+          });
+
+          setDynamicRecipes(prev => ({ ...prev, ...newRecipes }));
+        });
+
+        itemUnsubscribes.set(catDoc.id, itemUnsub);
+      });
+    });
+
+    return () => {
+      catUnsub();
+      itemUnsubscribes.forEach(u => u());
+    };
+  }, []);
+
+  const mergedRecipes: Record<string, Record<string, Record<string, number>>> = { ...RECIPES, ...dynamicRecipes };
+
+  // Modified refund handler - SAFE TRANSACTION VERSION
   const executeRefund = async () => {
     if (!orderToRefund) return;
-    
     setIsProcessing(orderToRefund.id);
 
     try {
-      await runTransaction(db, async (t) => {
-        const orderRef = doc(db, "orders", orderToRefund.id);
-        t.update(orderRef, { status: "refunded" });
-
-        const ingredientsToReturn: Record<string, number> = {};
+      // ============================================
+      // PHASE 1: PRE-CALCULATION (Outside Transaction)
+      // ============================================
+      // Merge hardcoded RECIPES with dynamic recipes from Firebase
+      const ingredientsToReturn: Record<string, number> = {};
+      
+      orderToRefund.items.forEach(item => {
+        const sizeKey = item.size === "Large" ? "Large" : "Medium";
+        const catLabel = item.category?.split(" · ")[0] || "";
+        const specificRecipeKey = `${catLabel} - ${item.name}`;
         
-        orderToRefund.items.forEach(item => {
-          const sizeKey = item.size === "Large" ? "Large" : "Medium";
-          const catLabel = item.category?.split(" · ")[0] || "";
-          const specificRecipeKey = `${catLabel} - ${item.name}`;
-          const recipe = RECIPES[specificRecipeKey]?.[sizeKey] || RECIPES[item.name]?.[sizeKey]; 
-          
-          if (recipe) {
-            Object.entries(recipe).forEach(([ing, amt]) => {
-              ingredientsToReturn[ing] = (ingredientsToReturn[ing] || 0) + ((amt as number) * item.quantity);
-            });
-          }
-          if (Array.isArray(item.addOns)) {
-            item.addOns.forEach(addOn => {
-              ingredientsToReturn[addOn] = (ingredientsToReturn[addOn] || 0) + ((ADD_ON_SERVING_SIZES[addOn] || 1) * item.quantity);
-            });
-          }
-        });
-
-        const ingNames = Object.keys(ingredientsToReturn);
-        if (ingNames.length > 0) {
-          const q = query(collection(db, "inventory"), where("name", "in", ingNames));
-          const invSnap = await getDocs(q); 
-          
-          invSnap.forEach(invDoc => {
-             const data = invDoc.data();
-             const returningAmount = ingredientsToReturn[data.name];
-             
-             if (returningAmount) {
-                const currentStock = parseFloat(data.quantity) || 0;
-                const batches = Array.isArray(data.stockBatches) ? [...data.stockBatches] : [];
-                
-                if(batches.length > 0) {
-                    batches[batches.length - 1].quantity = (parseFloat(batches[batches.length - 1].quantity) || 0) + returningAmount;
-                }
-                
-                t.update(invDoc.ref, {
-                  quantity: currentStock + returningAmount,
-                  stockBatches: batches
-                });
-             }
+        // Try specific recipe key first, then fallback to item name
+        const recipe = mergedRecipes[specificRecipeKey]?.[sizeKey] || mergedRecipes[item.name]?.[sizeKey]; 
+        
+        // Add base recipe ingredients
+        if (recipe) {
+          Object.entries(recipe).forEach(([ing, amt]) => {
+            ingredientsToReturn[ing] = (ingredientsToReturn[ing] || 0) + ((amt as number) * item.quantity);
           });
         }
+        
+        // Add add-on ingredients
+        if (Array.isArray(item.addOns)) {
+          item.addOns.forEach(addOn => {
+            ingredientsToReturn[addOn] = (ingredientsToReturn[addOn] || 0) + ((ADD_ON_SERVING_SIZES[addOn] || 1) * item.quantity);
+          });
+        }
+      });
 
-        // Handle refund based on payment method - Cash vs Non Cash
-        if (orderToRefund.paymentMethod === "Cash") {
-          // Cash refund - update shift expected cash
-          const shiftQ = query(collection(db, "shifts"), where("status", "==", "active"), limit(1));
-          const shiftSnap = await getDocs(shiftQ);
-          if (!shiftSnap.empty) {
-            const shiftRef = shiftSnap.docs[0].ref;
-            t.update(shiftRef, {
-              refunds: increment(orderToRefund.totalAmount),
-              expectedCash: increment(-orderToRefund.totalAmount)
+      const ingNames = Object.keys(ingredientsToReturn);
+      
+      // ============================================
+      // PHASE 2: PRE-FETCHING (Outside Transaction)
+      // ============================================
+      // Query inventory collection and fetch all necessary references
+      const inventoryRefs: { ref: any, name: string, returningAmount: number }[] = [];
+      
+      if (ingNames.length > 0) {
+        // Fetch all inventory documents for the calculated ingredients
+        const q = query(collection(db, "inventory"), where("name", "in", ingNames));
+        try {
+          const invSnap = await getDocs(q);
+          invSnap.forEach(invDoc => {
+            inventoryRefs.push({
+              ref: invDoc.ref,
+              name: invDoc.data().name,
+              returningAmount: ingredientsToReturn[invDoc.data().name] || 0
             });
-          }
-        } else if (orderToRefund.paymentMethod === "Non Cash") {
-          // Non Cash refund (digital payments) - create a refund record
-          const refundRef = doc(collection(db, "non_cash_refunds"));
-          t.set(refundRef, {
-            orderId: orderToRefund.id,
-            transactionNumber: orderToRefund.transactionNumber,
-            amount: orderToRefund.totalAmount,
-            status: "pending",
-            createdAt: new Date(),
-            processedBy: orderToRefund.baristaName,
-            originalPaymentMethod: "Non Cash"
           });
           
-          // Track refund in shifts separately
-          const shiftQ = query(collection(db, "shifts"), where("status", "==", "active"), limit(1));
-          const shiftSnap = await getDocs(shiftQ);
-          if (!shiftSnap.empty) {
-            const shiftRef = shiftSnap.docs[0].ref;
-            t.update(shiftRef, {
-              nonCashRefunds: increment(orderToRefund.totalAmount),
-              refunds: increment(orderToRefund.totalAmount)
+          // Verify all ingredients were found in inventory
+          const foundIngNames = new Set(inventoryRefs.map(item => item.name));
+          const missingIngs = ingNames.filter(name => !foundIngNames.has(name));
+          
+          if (missingIngs.length > 0) {
+            throw new Error(`Cannot process refund: Inventory items not found for ${missingIngs.join(", ")}. Please contact support.`);
+          }
+        } catch (error) {
+          throw new Error(`Failed to fetch inventory data: ${error instanceof Error ? error.message : "Unknown error"}`);
+        }
+      }
+
+      // Fetch the active shift document
+      let shiftRef: any = null;
+      let shiftData: any = null;
+      try {
+        const shiftQ = query(collection(db, "shifts"), where("status", "==", "active"), limit(1));
+        const shiftSnap = await getDocs(shiftQ);
+        if (!shiftSnap.empty) {
+          shiftRef = shiftSnap.docs[0].ref;
+          shiftData = shiftSnap.docs[0].data();
+        }
+      } catch (error) {
+        throw new Error(`Failed to fetch shift data: ${error instanceof Error ? error.message : "Unknown error"}`);
+      }
+
+      // ============================================
+      // PHASE 3: SAFE TRANSACTION (Inside Transaction)
+      // ============================================
+      // Execute atomic transaction using only pre-fetched references
+      await runTransaction(db, async (t) => {
+        try {
+          // ============================================
+          // STEP 1: READ ALL DOCUMENTS FIRST
+          // ============================================
+          // Read order document
+          const orderRef = doc(db, "orders", orderToRefund.id);
+          const orderSnap = await t.get(orderRef);
+          if (!orderSnap.exists()) {
+            throw new Error("Order document no longer exists. Transaction aborted.");
+          }
+
+          // Read all inventory documents
+          const inventorySnapshots: { ref: any, name: string, returningAmount: number, snap: any }[] = [];
+          for (const item of inventoryRefs) {
+            const docSnap = await t.get(item.ref);
+            
+            // ERROR HANDLING: Abort transaction if inventory document doesn't exist
+            if (!docSnap.exists()) {
+              throw new Error(`Inventory document for "${item.name}" no longer exists. Transaction aborted to prevent data inconsistency.`);
+            }
+
+            inventorySnapshots.push({
+              ref: item.ref,
+              name: item.name,
+              returningAmount: item.returningAmount,
+              snap: docSnap
             });
           }
+
+          // Read shift document if it exists
+          let shiftSnap: any = null;
+          if (shiftRef) {
+            shiftSnap = await t.get(shiftRef);
+            if (!shiftSnap.exists()) {
+              throw new Error("Shift document no longer exists. Transaction aborted.");
+            }
+          }
+
+          // ============================================
+          // STEP 2: PERFORM ALL WRITES (after all reads)
+          // ============================================
+          // Update order status to "refunded"
+          t.update(orderRef, { status: "refunded" });
+
+          // Update inventory stocks and batches for each ingredient
+          for (const invItem of inventorySnapshots) {
+            const data = invItem.snap.data() as any;
+            const currentStock = parseFloat(data.quantity) || 0;
+            const batches = Array.isArray(data.stockBatches) ? [...data.stockBatches] : [];
+            
+            // Return quantity to the most recent batch if batches exist
+            if (batches.length > 0) {
+              batches[batches.length - 1].quantity = (parseFloat(batches[batches.length - 1].quantity) || 0) + invItem.returningAmount;
+            }
+            
+            // Update inventory with new stock level and updated batches
+            t.update(invItem.ref, {
+              quantity: currentStock + invItem.returningAmount,
+              stockBatches: batches,
+              lastUpdated: new Date()
+            });
+          }
+
+          // Handle shift updates based on payment method
+          if (orderToRefund.paymentMethod === "Cash") {
+            // Only update shift if one exists (don't block refund if no active shift)
+            if (shiftRef) {
+              // Deduct cash refund from expected cash for the shift
+              t.update(shiftRef, {
+                refunds: increment(orderToRefund.totalAmount),
+                expectedCash: increment(-orderToRefund.totalAmount)
+              });
+            }
+            // Note: Cash refund proceeds even if no active shift exists
+          } else if (orderToRefund.paymentMethod === "Non Cash") {
+            // Create a non-cash refund record
+            const refundRef = doc(collection(db, "non_cash_refunds"));
+            t.set(refundRef, {
+              orderId: orderToRefund.id,
+              transactionNumber: orderToRefund.transactionNumber,
+              amount: orderToRefund.totalAmount,
+              status: "pending",
+              createdAt: new Date(),
+              processedBy: orderToRefund.baristaName || 'Unknown',
+              originalPaymentMethod: "Non Cash"
+            });
+            
+            // Update shift with non-cash refund tracking
+            if (shiftRef) {
+              t.update(shiftRef, {
+                nonCashRefunds: increment(orderToRefund.totalAmount),
+                refunds: increment(orderToRefund.totalAmount)
+              });
+            }
+          }
+        } catch (txError) {
+          // Transaction error will be caught and handled by outer try-catch
+          throw txError;
         }
       });
       
+      // Success message
       const refundMessage = orderToRefund.paymentMethod === "Non Cash" 
         ? `Order #${orderToRefund.transactionNumber} has been refunded. Non-cash refund of ₱${orderToRefund.totalAmount.toFixed(2)} has been initiated.`
         : `Order #${orderToRefund.transactionNumber} has been refunded. Cash refund of ₱${orderToRefund.totalAmount.toFixed(2)} has been processed.`;
@@ -399,8 +541,9 @@ export default function OrderHistoryPage() {
 
     } catch (e) {
       console.error("Refund error:", e);
-      setRefundSuccessMsg(`Failed to refund order #${orderToRefund.transactionNumber}. Please try again.`);
-      setTimeout(() => setRefundSuccessMsg(null), 3000);
+      const errorMsg = e instanceof Error ? e.message : "Failed to refund order. Please try again.";
+      setRefundSuccessMsg(`Error processing order #${orderToRefund?.transactionNumber}: ${errorMsg}`);
+      setTimeout(() => setRefundSuccessMsg(null), 5000);
     } finally {
       setIsProcessing(null);
     }
@@ -808,7 +951,7 @@ export default function OrderHistoryPage() {
                               window.print();
                               window.onafterprint = function() { window.close(); };
                             };
-                          <\/script>
+                          </script>
                         </body>
                       </html>
                     `);
