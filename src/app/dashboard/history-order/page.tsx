@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { collection, query, orderBy, onSnapshot, runTransaction, doc, increment, getDocs, where, limit, addDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { logRefundTransaction } from "@/utils/userActivityLogger";
 
 interface OrderItem {
   name: string;
@@ -529,6 +530,19 @@ export default function OrderHistoryPage() {
           throw txError;
         }
       });
+      
+      // Log the refund transaction to activity_logs
+      await logRefundTransaction(
+        {
+          uid: user?.uid || "unknown",
+          email: user?.email || undefined,
+          name: user?.displayName || undefined,
+        },
+        orderToRefund.transactionNumber,
+        orderToRefund.items as any,
+        orderToRefund.totalAmount,
+        orderToRefund.paymentMethod
+      );
       
       // Success message
       const refundMessage = orderToRefund.paymentMethod === "Non Cash" 

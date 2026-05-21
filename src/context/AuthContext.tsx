@@ -2,9 +2,10 @@
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { User, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updateProfile } from 'firebase/auth';
-import { doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot, collection, query, where, getDocs } from 'firebase/firestore';
 import { auth } from '@/lib/firebase';
 import { db } from '@/lib/firebase';
+import { logUserAction, startUserSession, endUserSession } from '@/utils/userActivityLogger';
 
 interface UserData {
   fullname?: string;
@@ -19,7 +20,8 @@ interface AuthContextType {
   userData: UserData | null;
   userRole: string;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
+  sessionId: string | null;
+  signIn: (emailOrUsername: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, displayName: string, fullname: string, username: string) => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -42,6 +44,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [user, setUser] = useState<User | null>(null);
   const [userData, setUserData] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [sessionId, setSessionId] = useState<string | null>(null);
 
   useEffect(() => {
     let unsubscribeFirestore: (() => void) | null = null;
@@ -85,8 +88,52 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     };
   }, []);
 
-  const signIn = async (email: string, password: string) => {
-    await signInWithEmailAndPassword(auth, email, password);
+  const signIn = async (emailOrUsername: string, password: string) => {
+    try {
+      let emailToUse = emailOrUsername;
+      let customName = emailOrUsername;
+      
+      // Kung username ang tinype (walang @), hahanapin muna natin ang email sa DB
+      if (!emailOrUsername.includes("@")) {
+        const q = query(collection(db, 'users'), where('username', '==', emailOrUsername));
+        const querySnapshot = await getDocs(q);
+        
+        if (querySnapshot.empty) {
+          throw new Error("Invalid username or password");
+        }
+        
+        const fetchedUserData = querySnapshot.docs[0].data();
+        emailToUse = fetchedUserData.email;
+        // Kunin natin ang fullname para maganda ang display sa SRD Panel
+        customName = fetchedUserData.fullname || fetchedUserData.username || emailToUse;
+      }
+
+      // Login gamit ang nahanap na email
+      const userCredential = await signInWithEmailAndPassword(auth, emailToUse, password);
+      
+      // Start user session and log login action
+      if (userCredential.user) {
+        // Ipasa ang TAMANG object format para hindi mag-error
+        const userInfo = {
+          uid: userCredential.user.uid,
+          email: userCredential.user.email || emailToUse,
+          name: customName
+        };
+
+        const newSessionId = await startUserSession(userInfo);
+        setSessionId(newSessionId);
+
+        // Log the login action sa activity_logs
+        await logUserAction(
+          userInfo,
+          'LOGIN',
+          { method: 'username/password', usernameInput: emailOrUsername }
+        );
+      }
+    } catch (error: any) {
+      console.error("[signIn] Error during sign in:", error);
+      throw error;
+    }
   };
 
   const signUp = async (email: string, password: string, displayName: string, fullname: string, username: string) => {
@@ -105,9 +152,29 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       status: 'active',
       uid: userCredential.user.uid,
     });
+
+    // Log the signup action
+    await logUserAction(
+      {
+        uid: userCredential.user.uid,
+        email: userCredential.user.email || email,
+        name: displayName || fullname || email,
+      },
+      'SIGNUP',
+      { username, fullname }
+    );
   };
 
   const logout = async () => {
+    if (user && sessionId) {
+      // End user session and log logout action
+      await endUserSession(sessionId, {
+        uid: user.uid,
+        email: user.email || '',
+        name: user.displayName || '',
+      });
+      setSessionId(null);
+    }
     await signOut(auth);
   };
 
@@ -118,6 +185,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     userData,
     userRole,
     loading,
+    sessionId,
     signIn,
     signUp,
     logout,

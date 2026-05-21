@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { collection, addDoc, serverTimestamp, runTransaction, doc, increment, query, where, getDocs, onSnapshot, DocumentReference, deleteDoc, updateDoc, setDoc, orderBy } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { logSaleTransaction } from "@/utils/userActivityLogger";
 
 // Utility function for generating IDs (tablet compatible)
 const generateId = () => {
@@ -3242,6 +3243,23 @@ export default function POSLayout() {
 
       if (ingredientNames.length === 0) {
         await addDoc(collection(db, "orders"), orderPayload);
+        // Log the sale transaction to activity_logs
+        await logSaleTransaction(
+          {
+            uid: user?.uid || "unknown",
+            email: user?.email || undefined,
+            name: user?.displayName || undefined,
+          },
+          transactionNumber,
+          orderItems as any,
+          total,
+          paymentMethod,
+          bulkDiscount !== "None" ? {
+            type: bulkDiscount,
+            amount: discountAmount,
+            percentage: bulkDiscount === "5%" ? 5 : 10,
+          } : undefined
+        );
       } else {
         const q = query(collection(db, "inventory"), where("name", "in", ingredientNames));
         const querySnapshot = await getDocs(q);
@@ -3324,6 +3342,24 @@ export default function POSLayout() {
           }
         });
       }
+
+      // Log the sale transaction to activity_logs
+      await logSaleTransaction(
+        {
+          uid: user?.uid || "unknown",
+          email: user?.email || undefined,
+          name: user?.displayName || undefined,
+        },
+        transactionNumber,
+        orderItems as any,
+        total,
+        paymentMethod,
+        bulkDiscount !== "None" ? {
+          type: bulkDiscount,
+          amount: discountAmount,
+          percentage: bulkDiscount === "5%" ? 5 : 10,
+        } : undefined
+      );
 
       setLastTransaction({
   number: transactionNumber,
