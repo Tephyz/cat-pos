@@ -100,7 +100,7 @@ export default function SigninPage() {
         >
           <div className="relative flex flex-col items-center text-center text-white">
             <div className="w-64 h-64 bg-white/8 rounded-full flex items-center justify-center mb-6 backdrop-blur-sm transition-transform duration-500 hover:scale-105">
-              <Image src="/2nd.png" alt="Logo" width={220} height={220} className="object-contain" priority />
+              <Image src="/Logo.png" alt="Logo" width={220} height={220} className="object-contain" priority />
             </div>
             <h2 className="text-2xl font-bold mb-2 font-serif">Coffee & Tea</h2>
             <p className="text-white/80 max-w-xs leading-relaxed">

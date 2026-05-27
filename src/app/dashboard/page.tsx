@@ -1283,110 +1283,165 @@ function ManageRecipesTab({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
+      {/* Header Section */}
       <div>
-        <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>
-          Items Without a Recipe
-        </label>
+        <h3 className="text-lg font-bold mb-3" style={{ color: "#3b2212" }}>Manage Item Recipes</h3>
         {itemsWithoutRecipe.length === 0 ? (
-          <div className="p-4 rounded-xl text-center text-sm" style={{ background: "#f0faf0", color: "#2d7a38", border: "1.5px solid #c8e6c9" }}>
-            ✓ All items already have recipes!
+          <div className="p-5 rounded-xl text-center" style={{ background: "#f0faf0", border: "2px solid #c8e6c9" }}>
+            <p style={{ color: "#2d7a38", fontWeight: "600" }}>All items already have recipes</p>
+            <p className="text-sm mt-1" style={{ color: "#5a9d5f" }}>Great job keeping everything organized!</p>
           </div>
         ) : (
-          <select
-            value={recipeSelectedItem}
-            onChange={(e) => { setRecipeSelectedItem(e.target.value); setRecipeIngredients([]); }}
-            className="w-full rounded-xl px-4 py-3 text-base outline-none min-h-[48px]"
-            style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
-          >
-            <option value="">— Select an item —</option>
-            {itemsWithoutRecipe.map(({ name, category }) => (
-              <option key={`${category}-${name}`} value={name}>{name} ({category})</option>
-            ))}
-          </select>
+          <>
+            <p className="text-sm mb-3" style={{ color: "#a07850" }}>Select an item to add or edit its recipe</p>
+            
+            {/* Items Grid */}
+            <div className="grid gap-3 grid-cols-1 md:grid-cols-2">
+              {itemsWithoutRecipe.map(({ name, category }) => (
+                <button
+                  key={`${category}-${name}`}
+                  onClick={() => { setRecipeSelectedItem(name); setRecipeIngredients([]); }}
+                  className="p-4 rounded-xl text-left transition-all border-2"
+                  style={{
+                    background: recipeSelectedItem === name ? "#3b2212" : "#faf7f4",
+                    borderColor: recipeSelectedItem === name ? "#3b2212" : "#e8ddd4",
+                    color: recipeSelectedItem === name ? "white" : "#3b2212",
+                  }}
+                >
+                  <p className="font-semibold">{name}</p>
+                  <p className="text-sm mt-1" style={{ color: recipeSelectedItem === name ? "rgba(255,255,255,0.8)" : "#a07850" }}>
+                    {category}
+                  </p>
+                </button>
+              ))}
+            </div>
+          </>
         )}
       </div>
 
+      {/* Recipe Builder */}
       {recipeSelectedItem && (
-        <>
-          <div>
-            <div className="flex justify-between items-center mb-2">
-              <label className="text-sm font-semibold" style={{ color: "#3b2212" }}>Ingredients</label>
+        <div className="p-5 rounded-2xl border-2" style={{ background: "#faf7f4", borderColor: "#e8ddd4" }}>
+          <div className="flex justify-between items-center mb-4">
+            <div>
+              <p className="text-sm" style={{ color: "#a07850" }}>Building recipe for:</p>
+              <p className="text-xl font-bold" style={{ color: "#3b2212" }}>{recipeSelectedItem}</p>
+            </div>
+            <button
+              onClick={() => { setRecipeSelectedItem(""); setRecipeIngredients([]); }}
+              className="px-4 py-2 rounded-lg font-semibold text-sm transition-all hover:bg-white"
+              style={{ background: "#f5f1ed", color: "#3b2212", border: "1.5px solid #e8ddd4" }}
+            >
+              Clear
+            </button>
+          </div>
+
+          {/* Ingredients List */}
+          <div className="mb-4">
+            <div className="flex justify-between items-center mb-3">
+              <p className="font-semibold" style={{ color: "#3b2212" }}>Ingredients</p>
               <button
                 onClick={() => setRecipeIngredients(prev => [...prev, { ingredient: inventoryKeys[0] || "", medQty: "", lgQty: "" }])}
-                className="px-4 py-2 rounded-lg text-sm font-semibold active:scale-95 touch-manipulation min-h-[36px]"
+                className="px-4 py-2 rounded-lg text-sm font-semibold transition-all active:scale-95 min-h-[36px]"
                 style={{ background: "#3b2212", color: "white" }}
               >
-                + Add Ingredient
+                Add Ingredient
               </button>
             </div>
+
             {recipeIngredients.length === 0 ? (
-              <p className="text-sm text-center py-4 rounded-xl" style={{ background: "#faf7f4", color: "#c0b090" }}>
-                Tap "+ Add Ingredient" to start building the recipe.
-              </p>
+              <div className="p-4 rounded-xl text-center" style={{ background: "white", border: "2px dashed #c8b090" }}>
+                <p className="text-sm" style={{ color: "#c0b090" }}>No ingredients yet. Click "Add Ingredient" to start.</p>
+              </div>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-3">
+                {/* Header Row */}
                 <div className="grid grid-cols-12 gap-2 px-2 text-xs font-semibold" style={{ color: "#a07850" }}>
                   <span className="col-span-5">Ingredient</span>
-                  <span className="col-span-3 text-center">Med qty</span>
-                  <span className="col-span-3 text-center">Lg qty</span>
+                  <span className="col-span-3 text-center">Medium (ml/g)</span>
+                  <span className="col-span-3 text-center">Large (ml/g)</span>
                   <span className="col-span-1" />
                 </div>
+
+                {/* Ingredient Rows */}
                 {recipeIngredients.map((row, idx) => (
-                  <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                  <div key={idx} className="grid grid-cols-12 gap-2 items-center p-2 rounded-lg" style={{ background: "white" }}>
                     <div className="col-span-5">
                       <select
                         value={row.ingredient}
                         onChange={(e) => setRecipeIngredients(prev => prev.map((r, i) => i === idx ? { ...r, ingredient: e.target.value } : r))}
-                        className="w-full rounded-lg px-2 py-2 text-sm outline-none min-h-[40px]"
-                        style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
+                        className="w-full rounded-lg px-2 py-2 text-sm outline-none border min-h-[40px]"
+                        style={{ borderColor: "#e8ddd4", background: "#faf7f4", color: "#3b2212" }}
                       >
                         {inventoryKeys.map(k => <option key={k} value={k}>{k}</option>)}
                       </select>
                     </div>
                     <div className="col-span-3">
-                      <input type="number" value={row.medQty} placeholder="Med"
+                      <input 
+                        type="number" 
+                        value={row.medQty} 
+                        placeholder="0"
                         onChange={(e) => setRecipeIngredients(prev => prev.map((r, i) => i === idx ? { ...r, medQty: e.target.value } : r))}
-                        className="w-full rounded-lg px-2 py-2 text-sm text-center outline-none min-h-[40px]"
-                        style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }} />
+                        className="w-full rounded-lg px-2 py-2 text-sm text-center outline-none border min-h-[40px]"
+                        style={{ borderColor: "#e8ddd4", background: "#faf7f4", color: "#3b2212" }}
+                      />
                     </div>
                     <div className="col-span-3">
-                      <input type="number" value={row.lgQty} placeholder="Lg (opt)"
+                      <input 
+                        type="number" 
+                        value={row.lgQty} 
+                        placeholder="Auto"
                         onChange={(e) => setRecipeIngredients(prev => prev.map((r, i) => i === idx ? { ...r, lgQty: e.target.value } : r))}
-                        className="w-full rounded-lg px-2 py-2 text-sm text-center outline-none min-h-[40px]"
-                        style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }} />
+                        className="w-full rounded-lg px-2 py-2 text-sm text-center outline-none border min-h-[40px]"
+                        style={{ borderColor: "#e8ddd4", background: "#faf7f4", color: "#3b2212" }}
+                      />
                     </div>
                     <div className="col-span-1 flex justify-center">
-                      <button onClick={() => setRecipeIngredients(prev => prev.filter((_, i) => i !== idx))}
-                        className="w-8 h-8 rounded-full flex items-center justify-center text-sm active:scale-95"
-                        style={{ background: "#fee2e2", color: "#c0392b" }}>✕</button>
+                      <button 
+                        onClick={() => setRecipeIngredients(prev => prev.filter((_, i) => i !== idx))}
+                        className="w-8 h-8 rounded-lg flex items-center justify-center text-sm active:scale-95 font-bold transition-all hover:bg-red-100"
+                        style={{ background: "#fee2e2", color: "#c0392b" }}
+                      >
+                        ×
+                      </button>
                     </div>
                   </div>
                 ))}
-                <p className="text-xs" style={{ color: "#a07850" }}>Leave Lg blank to use same as Med.</p>
+
+                <p className="text-xs mt-2" style={{ color: "#a07850" }}>
+                  Leave Large blank to automatically use the same amount as Medium
+                </p>
               </div>
             )}
           </div>
+
+          {/* Save Button */}
           <button
             onClick={handleSaveRecipe}
             disabled={recipeSaving || recipeIngredients.length === 0}
-            className="w-full py-4 rounded-xl font-semibold text-lg transition-all active:scale-95 touch-manipulation min-h-[52px]"
+            className="w-full py-4 rounded-xl font-bold text-lg transition-all active:scale-95 min-h-[52px]"
             style={{
               background: recipeSaving || recipeIngredients.length === 0 ? "#e8e0d8" : "#2d7a38",
               color: recipeSaving || recipeIngredients.length === 0 ? "#b09070" : "white",
               cursor: recipeSaving || recipeIngredients.length === 0 ? "not-allowed" : "pointer",
             }}
           >
-            {recipeSaving ? "Saving..." : `Save Recipe for "${recipeSelectedItem}"`}
+            {recipeSaving ? "Saving Recipe..." : "Save Recipe"}
           </button>
-        </>
-      )}
 
-      {message && (
-        <div className={`p-3 rounded-xl text-center text-sm font-medium ${
-          message.type === "success" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"
-        }`}>
-          {message.text}
+          {/* Status Messages */}
+          {message && (
+            <div
+              className={`mt-4 p-4 rounded-xl text-center font-semibold text-sm ${
+                message.type === "success" 
+                  ? "bg-green-50 text-green-700 border-2 border-green-200" 
+                  : "bg-red-50 text-red-700 border-2 border-red-200"
+              }`}
+            >
+              {message.text}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1704,7 +1759,7 @@ function ManageModal({
   isOpen: boolean; 
   onClose: () => void; 
   onAddCategory: (categoryName: string, color: string) => void; 
-  onAddItem: (item: { name: string; price: number; category: string; isFood?: boolean; recipe?: { Medium: Record<string, number>; Large: Record<string, number> } }) => void;
+  onAddItem: (item: { name: string; price: number; category: string; subcategory?: string; isFood?: boolean; recipe?: { Medium: Record<string, number>; Large: Record<string, number> } }) => void;
   onDeleteCategory: (categoryName: string) => void;
   onDeleteItem: (categoryName: string, itemName: string) => void;
   categories: string[];
@@ -1721,6 +1776,7 @@ function ManageModal({
   const [itemPrice, setItemPrice] = useState("");
   const [selectedCategory, setSelectedCategory] = useState(categories[0] || "Coffee");
   const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
   
   const [deleteConfirm, setDeleteConfirm] = useState<{
     isOpen: boolean;
@@ -1732,8 +1788,17 @@ function ManageModal({
   // --- Inline Recipe Builder state (for Add Item tab) ---
   const [newItemIngredients, setNewItemIngredients] = useState<{ ingredient: string; medQty: string; lgQty: string }[]>([]);
   const [isItemFood, setIsItemFood] = useState(false);
+  const [selectedSubcategory, setSelectedSubcategory] = useState<string>("");
+
+  const SUBCATEGORIES: Record<string, string[]> = {
+    "Frappe": ["Coffee Based", "Cream Based", "Tea Based"],
+    "Food & Bites": ["Grilled / Fried", "Sides & Snacks", "Sandwiches & Burgers", "Desserts & Pastries", "Breakfast", "Silog Meals", "Pasta", "Salads"],
+  };
 
   if (!isOpen) return null;
+
+  const currentSubcategories = SUBCATEGORIES[selectedCategory] || [];
+  const isFoodCategory = selectedCategory === "Food & Bites";
 
   // Sort categories alphabetically
   const sortedCategories = sortAlphabetically(categories);
@@ -1834,8 +1899,9 @@ function ManageModal({
       name: itemName.trim(),
       price: parseFloat(itemPrice),
       category: selectedCategory,
-      isFood: isItemFood,
-      recipe,
+      subcategory: currentSubcategories.length > 0 ? (selectedSubcategory || currentSubcategories[0]) : undefined,
+      isFood: isFoodCategory || isItemFood,
+      recipe: isFoodCategory ? undefined : recipe,
     });
 
     if (recipe) {
@@ -1848,6 +1914,7 @@ function ManageModal({
     setItemPrice("");
     setNewItemIngredients([]);
     setIsItemFood(false);
+    setSelectedSubcategory("");
     setTimeout(() => setMessage(null), 3000);
   };
 
@@ -1866,367 +1933,172 @@ function ManageModal({
     setTimeout(() => setMessage(null), 2000);
   };
 
+  // Filter items based on search
+  const filteredCategories = sortAlphabetically(categories).filter(cat => 
+    cat.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+  const filteredItems = sortAlphabetically(itemsByCategory[selectedCategory] || []).filter(item =>
+    item.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   return (
     <>
       <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-50 p-4">
-        <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl" style={{ maxHeight: "90vh", overflow: "auto" }}>
-          <div className="p-6">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-2xl font-bold" style={{ color: "#3b2212" }}>Manage Menu</h2>
+        <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl flex flex-col" style={{ maxHeight: "90vh" }}>
+          {/* Header */}
+          <div className="p-6 border-b" style={{ borderColor: "#e8ddd4" }}>
+            <div className="flex justify-between items-start">
+              <div>
+                <h2 className="text-3xl font-bold" style={{ color: "#3b2212" }}>Manage Menu</h2>
+                <p className="text-sm mt-1" style={{ color: "#a07850" }}>Add categories, items, and recipes</p>
+              </div>
               <button
                 onClick={onClose}
-                className="w-12 h-12 rounded-full flex items-center justify-center text-xl active:scale-95 touch-manipulation"
-                style={{ background: "#f7f3ef", color: "#3b2212", border: "1px solid #e8ddd4", minHeight: "44px" }}
+                className="w-10 h-10 rounded-full flex items-center justify-center text-lg active:scale-95 transition-all hover:bg-gray-100"
+                style={{ color: "#3b2212" }}
               >
-                ✕
+                ×
               </button>
             </div>
+          </div>
 
-            <div className="flex gap-2 mb-6 border-b border-[#e8ddd4]">
-              <button
-                onClick={() => { setActiveTab("category"); setMessage(null); }}
-                className={`px-6 py-3 font-semibold transition-all min-h-[44px] ${
-                  activeTab === "category"
-                    ? "border-b-2 border-[#3b2212] text-[#3b2212]"
-                    : "text-[#a07850] hover:text-[#3b2212]"
-                }`}
-              >
-                Add Category
-              </button>
-              <button
-                onClick={() => { setActiveTab("item"); setMessage(null); }}
-                className={`px-6 py-3 font-semibold transition-all min-h-[44px] ${
-                  activeTab === "item"
-                    ? "border-b-2 border-[#3b2212] text-[#3b2212]"
-                    : "text-[#a07850] hover:text-[#3b2212]"
-                }`}
-              >
-                Add Item
-              </button>
-              <button
-                onClick={() => { setActiveTab("recipe"); setMessage(null); }}
-                className={`px-6 py-3 font-semibold transition-all min-h-[44px] ${
-                  activeTab === "recipe"
-                    ? "border-b-2 border-[#3b2212] text-[#3b2212]"
-                    : "text-[#a07850] hover:text-[#3b2212]"
-                }`}
-              >
-                Manage Recipes
-              </button>
-            </div>
+          {/* Tab Navigation */}
+          <div className="flex gap-0 border-b px-6" style={{ borderColor: "#e8ddd4" }}>
+            <button
+              onClick={() => { setActiveTab("category"); setSearchQuery(""); setMessage(null); }}
+              className={`px-6 py-3 font-semibold text-sm transition-all border-b-2 ${
+                activeTab === "category"
+                  ? "border-[#3b2212] text-[#3b2212]"
+                  : "border-transparent text-[#a07850] hover:text-[#3b2212]"
+              }`}
+            >
+              Categories
+            </button>
+            <button
+              onClick={() => { setActiveTab("item"); setSearchQuery(""); setMessage(null); }}
+              className={`px-6 py-3 font-semibold text-sm transition-all border-b-2 ${
+                activeTab === "item"
+                  ? "border-[#3b2212] text-[#3b2212]"
+                  : "border-transparent text-[#a07850] hover:text-[#3b2212]"
+              }`}
+            >
+              Items
+            </button>
+            <button
+              onClick={() => { setActiveTab("recipe"); setSearchQuery(""); setMessage(null); }}
+              className={`px-6 py-3 font-semibold text-sm transition-all border-b-2 ${
+                activeTab === "recipe"
+                  ? "border-[#3b2212] text-[#3b2212]"
+                  : "border-transparent text-[#a07850] hover:text-[#3b2212]"
+              }`}
+            >
+              Recipes
+            </button>
+          </div>
+
+          {/* Content Area */}
+          <div className="flex-1 overflow-y-auto p-6">
 
             {activeTab === "category" && (
-              <div className="space-y-4">
-                <div>
-                  <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>
-                    Category Name
-                  </label>
-                  <input
-                    type="text"
-                    value={categoryName}
-                    onChange={(e) => setCategoryName(e.target.value)}
-                    placeholder="e.g., Smoothies, Iced Tea, Pastries"
-                    className="w-full rounded-xl px-4 py-3 text-base outline-none min-h-[48px]"
-                    style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
-                    onKeyPress={(e) => e.key === "Enter" && handleAddCategory()}
-                  />
-                </div>
-
-                <div>
-                  <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>
-                    Category Color
-                  </label>
-                  <div className="flex gap-3 items-center">
-                    <input
-                      type="color"
-                      value={categoryColor}
-                      onChange={(e) => setCategoryColor(e.target.value)}
-                      className="w-16 h-12 rounded-lg cursor-pointer"
-                      style={{ border: "1.5px solid #e8ddd4" }}
-                    />
-                    <span className="text-sm" style={{ color: "#a07850" }}>
-                      Choose a color for the category cards
-                    </span>
-                  </div>
-                  <div className="mt-3 p-3 rounded-xl" style={{ background: `${categoryColor}20`, border: `1.5px solid ${categoryColor}` }}>
-                    <p className="text-sm font-semibold" style={{ color: categoryColor }}>
-                      Preview: {categoryName || "New Category"} items will use this color
-                    </p>
-                  </div>
-                </div>
-
-                <button
-                  onClick={handleAddCategory}
-                  className="w-full py-4 rounded-xl font-semibold text-lg transition-all active:scale-95 touch-manipulation min-h-[52px]"
-                  style={{ background: "#3b2212", color: "white" }}
-                >
-                  + Add Category
-                </button>
-
-                {message && (
-                  <div
-                    className={`p-3 rounded-xl text-center transition-all duration-300 ${
-                      message.type === "success" 
-                        ? "bg-green-50 text-green-700 border border-green-200" 
-                        : "bg-red-50 text-red-700 border border-red-200"
-                    }`}
-                    style={{
-                      animation: "fadeInUp 0.3s ease-out",
-                    }}
-                  >
-                    <span className="text-sm font-medium">{message.text}</span>
-                  </div>
-                )}
-
-                <div className="mt-6 pt-4 border-t" style={{ borderColor: "#e8ddd4" }}>
-                  <h3 className="text-md font-semibold mb-3" style={{ color: "#3b2212" }}>
-                    Existing Categories (Alphabetical)
-                  </h3>
-                  <div className="space-y-2 max-h-64 overflow-y-auto">
-                    {sortedCategories.map((cat) => {
-                      const catColor = getCategoryColor(cat);
-                      return (
-                        <div
-                          key={cat}
-                          className="flex justify-between items-center p-3 rounded-xl"
-                          style={{ background: `${catColor}15`, border: `1.5px solid ${catColor}30` }}
-                        >
-                          <div className="flex items-center gap-2">
-                            <div className="w-4 h-4 rounded-full" style={{ background: catColor }}></div>
-                            <span className="text-sm font-medium" style={{ color: catColor }}>{cat}</span>
-                          </div>
-                          <button
-                            onClick={() => handleDeleteClick("category", cat)}
-                            className="px-4 py-2 rounded-lg text-sm font-semibold transition-all active:scale-95 touch-manipulation min-h-[40px]"
-                            style={{ background: "#fee2e2", color: "#c0392b" }}
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {activeTab === "item" && (
-              <div className="space-y-4">
-                <div>
-                  <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>
-                    Select Category
-                  </label>
-                  <select
-                    value={selectedCategory}
-                    onChange={(e) => setSelectedCategory(e.target.value)}
-                    className="w-full rounded-xl px-4 py-3 text-base outline-none min-h-[48px]"
-                    style={{ 
-                      background: getCategoryBgColor(selectedCategory), 
-                      border: `1.5px solid ${getCategoryColor(selectedCategory)}30`,
-                      color: getCategoryColor(selectedCategory),
-                      fontWeight: "500"
-                    }}
-                  >
-                    {sortedCategories.map((cat) => {
-                      const catColor = getCategoryColor(cat);
-                      return (
-                        <option 
-                          key={cat} 
-                          value={cat}
-                          style={{ 
-                            background: `${catColor}20`, 
-                            color: catColor,
-                            padding: "8px"
-                          }}
-                        >
-                          {cat}
-                        </option>
-                      );
-                    })}
-                  </select>
-                  {selectedCategory && (
-                    <p className="text-xs mt-1.5" style={{ color: getCategoryColor(selectedCategory) }}>
-                      Items added to this category will use its color scheme
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>
-                    Product Name
-                  </label>
-                  <input
-                    type="text"
-                    value={itemName}
-                    onChange={(e) => setItemName(e.target.value)}
-                    placeholder="e.g., Mango Smoothie"
-                    className="w-full rounded-xl px-4 py-3 text-base outline-none min-h-[48px]"
-                    style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
-                  />
-                </div>
-
-                <div>
-                  <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>
-                    Price (₱) - Medium Size
-                  </label>
-                  <input
-                    type="number"
-                    value={itemPrice}
-                    onChange={(e) => setItemPrice(e.target.value)}
-                    placeholder="e.g., 150"
-                    className="w-full rounded-xl px-4 py-3 text-base outline-none min-h-[48px]"
-                    style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
-                  />
-                  <p className="text-xs mt-1" style={{ color: "#a07850" }}>
-                    Large size price will be automatically set to +₱20
-                  </p>
-                </div>
-
-                {/* Recipe Builder — embedded in Add Item */}
-                <div className="pt-3 border-t" style={{ borderColor: "#e8ddd4" }}>
-                  <div className="flex justify-between items-center mb-3">
-                    <label className="text-sm font-semibold" style={{ color: "#3b2212" }}>
-                      Recipe / Ingredients
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer select-none">
-                      <span className="text-xs" style={{ color: "#a07850" }}>Food item (no recipe)</span>
-                      <div
-                        onClick={() => { setIsItemFood(v => !v); setNewItemIngredients([]); }}
-                        className="w-10 h-5 rounded-full transition-all relative"
-                        style={{ background: isItemFood ? "#2d7a38" : "#e8ddd4" }}
-                      >
-                        <div
-                          className="w-4 h-4 rounded-full bg-white absolute top-0.5 transition-all"
-                          style={{ left: isItemFood ? "22px" : "2px" }}
-                        />
-                      </div>
-                    </label>
-                  </div>
-
-                  {isItemFood ? (
-                    <div className="p-3 rounded-xl text-sm text-center" style={{ background: "#f0faf0", color: "#2d7a38", border: "1.5px solid #c8e6c9" }}>
-                      ✓ Food item — no recipe needed. Stock won't be deducted on checkout.
+              <div className="space-y-6">
+                {/* Add Category Card */}
+                <div className="p-5 rounded-2xl" style={{ background: "#faf7f4", border: "2px dashed #c8b090" }}>
+                  <h3 className="text-lg font-bold mb-4" style={{ color: "#3b2212" }}>Add New Category</h3>
+                  
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>Category Name</label>
+                      <input
+                        type="text"
+                        value={categoryName}
+                        onChange={(e) => setCategoryName(e.target.value)}
+                        placeholder="Category name"
+                        className="w-full rounded-xl px-4 py-3 text-base outline-none min-h-[48px] transition-all focus:ring-2"
+                        style={{ background: "white", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
+                        onKeyPress={(e) => e.key === "Enter" && handleAddCategory()}
+                      />
                     </div>
-                  ) : (
-                    <>
-                      {inventoryKeys.length === 0 ? (
-                        <p className="text-xs" style={{ color: "#c0392b" }}>No inventory items found. Add inventory items first.</p>
-                      ) : (
-                        <>
-                          {newItemIngredients.length === 0 ? (
-                            <p className="text-sm text-center py-3 rounded-xl mb-2" style={{ background: "#faf7f4", color: "#c0b090" }}>
-                              No ingredients yet — tap below to add.
-                            </p>
-                          ) : (
-                            <div className="space-y-2 mb-2">
-                              <div className="grid grid-cols-12 gap-1 px-1 text-xs font-semibold" style={{ color: "#a07850" }}>
-                                <span className="col-span-5">Ingredient</span>
-                                <span className="col-span-3 text-center">Med qty</span>
-                                <span className="col-span-3 text-center">Lg qty</span>
-                                <span className="col-span-1" />
-                              </div>
-                              {newItemIngredients.map((row, idx) => (
-                                <div key={idx} className="grid grid-cols-12 gap-1 items-center">
-                                  <div className="col-span-5">
-                                    <select
-                                      value={row.ingredient}
-                                      onChange={(e) => handleIngredientChangeForItem(idx, "ingredient", e.target.value)}
-                                      className="w-full rounded-lg px-2 py-2 text-xs outline-none min-h-[38px]"
-                                      style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
-                                    >
-                                      {inventoryKeys.map(key => (
-                                        <option key={key} value={key}>{key}</option>
-                                      ))}
-                                    </select>
-                                  </div>
-                                  <div className="col-span-3">
-                                    <input
-                                      type="number"
-                                      value={row.medQty}
-                                      onChange={(e) => handleIngredientChangeForItem(idx, "medQty", e.target.value)}
-                                      placeholder="Med"
-                                      className="w-full rounded-lg px-2 py-2 text-xs text-center outline-none min-h-[38px]"
-                                      style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
-                                    />
-                                  </div>
-                                  <div className="col-span-3">
-                                    <input
-                                      type="number"
-                                      value={row.lgQty}
-                                      onChange={(e) => handleIngredientChangeForItem(idx, "lgQty", e.target.value)}
-                                      placeholder="Lg"
-                                      className="w-full rounded-lg px-2 py-2 text-xs text-center outline-none min-h-[38px]"
-                                      style={{ background: "#faf7f4", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
-                                    />
-                                  </div>
-                                  <div className="col-span-1 flex justify-center">
-                                    <button
-                                      onClick={() => handleRemoveIngredientRowForItem(idx)}
-                                      className="w-7 h-7 rounded-full flex items-center justify-center text-xs active:scale-95"
-                                      style={{ background: "#fee2e2", color: "#c0392b" }}
-                                    >✕</button>
-                                  </div>
-                                </div>
-                              ))}
-                              <p className="text-xs" style={{ color: "#a07850" }}>
-                                Leave Lg qty blank to use same amount as Med.
-                              </p>
-                            </div>
-                          )}
-                          <button
-                            onClick={handleAddIngredientRowForItem}
-                            className="w-full py-2 rounded-xl text-sm font-semibold active:scale-95 touch-manipulation min-h-[40px] transition-all"
-                            style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px dashed #c8b090" }}
-                          >
-                            + Add Ingredient
-                          </button>
-                        </>
-                      )}
-                    </>
-                  )}
-                </div>
 
-                <button
-                  onClick={handleAddItem}
-                  className="w-full py-4 rounded-xl font-semibold text-lg transition-all active:scale-95 touch-manipulation min-h-[52px]"
-                  style={{ background: selectedCategory ? getCategoryColor(selectedCategory) : "#3b2212", color: "white" }}
-                >
-                  + Add Item to {selectedCategory || "Category"}
-                </button>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>Color</label>
+                        <div className="flex gap-3 items-center">
+                          <input
+                            type="color"
+                            value={categoryColor}
+                            onChange={(e) => setCategoryColor(e.target.value)}
+                            className="w-20 h-14 rounded-xl cursor-pointer"
+                            style={{ border: "2px solid #e8ddd4" }}
+                          />
+                          <span className="text-sm" style={{ color: "#a07850" }}>Choose color</span>
+                        </div>
+                      </div>
+
+                      <div className="p-4 rounded-xl" style={{ background: `${categoryColor}20`, border: `2px solid ${categoryColor}` }}>
+                        <p className="text-sm font-bold" style={{ color: categoryColor }}>
+                          Preview: <strong>{categoryName || "New"}</strong>
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={handleAddCategory}
+                      className="w-full py-4 rounded-xl font-bold text-lg transition-all active:scale-95 touch-manipulation min-h-[52px] hover:shadow-lg"
+                      style={{ background: "#3b2212", color: "white" }}
+                    >
+                      Add Category
+                    </button>
+                  </div>
+                </div>
 
                 {message && (
                   <div
-                    className={`p-3 rounded-xl text-center transition-all duration-300 ${
+                    className={`p-4 rounded-xl text-center transition-all duration-300 flex items-center justify-center gap-2 ${
                       message.type === "success" 
-                        ? "bg-green-50 text-green-700 border border-green-200" 
-                        : "bg-red-50 text-red-700 border border-red-200"
+                        ? "bg-green-50 text-green-700 border-2 border-green-200" 
+                        : "bg-red-50 text-red-700 border-2 border-red-200"
                     }`}
-                    style={{
-                      animation: "fadeInUp 0.3s ease-out",
-                    }}
                   >
-                    <span className="text-sm font-medium">{message.text}</span>
+                    <span className="font-semibold">{message.text}</span>
                   </div>
                 )}
 
-                <div className="mt-6 pt-4 border-t" style={{ borderColor: "#e8ddd4" }}>
-                  <h3 className="text-md font-semibold mb-3" style={{ color: "#3b2212" }}>
-                    Items in "{selectedCategory}" (Alphabetical)
-                  </h3>
-                  <div className="space-y-2 max-h-64 overflow-y-auto">
-                    {sortedItems.length > 0 ? (
-                      sortedItems.map((item) => {
-                        const catColor = getCategoryColor(selectedCategory);
+                {/* Existing Categories */}
+                <div>
+                  <h3 className="text-lg font-bold mb-4" style={{ color: "#3b2212" }}>Your Categories ({sortedCategories.length})</h3>
+
+                  {/* Search bar */}
+                  {sortedCategories.length > 3 && (
+                    <div className="mb-4">
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Search categories..."
+                        className="w-full rounded-xl px-4 py-3 text-sm outline-none border-2"
+                        style={{ borderColor: "#e8ddd4", background: "#faf7f4", color: "#3b2212" }}
+                      />
+                    </div>
+                  )}
+
+                  {/* Categories Grid */}
+                  <div className="grid gap-3 grid-cols-1 md:grid-cols-2">
+                    {filteredCategories.length > 0 ? (
+                      filteredCategories.map((cat) => {
+                        const catColor = getCategoryColor(cat);
                         return (
                           <div
-                            key={item}
-                            className="flex justify-between items-center p-3 rounded-xl"
-                            style={{ background: `${catColor}10`, border: `1.5px solid ${catColor}30` }}
+                            key={cat}
+                            className="p-4 rounded-xl border-2 transition-all hover:shadow-md flex justify-between items-center"
+                            style={{ background: `${catColor}08`, borderColor: `${catColor}40` }}
                           >
-                            <span className="text-sm font-medium" style={{ color: catColor }}>{item}</span>
+                            <div className="flex items-center gap-3">
+                              <div className="w-6 h-6 rounded-full flex-shrink-0" style={{ background: catColor }}></div>
+                              <span className="text-sm font-semibold" style={{ color: catColor }}>{cat}</span>
+                            </div>
                             <button
-                              onClick={() => handleDeleteClick("item", item, selectedCategory)}
-                              className="px-4 py-2 rounded-lg text-sm font-semibold transition-all active:scale-95 touch-manipulation min-h-[40px]"
+                              onClick={() => handleDeleteClick("category", cat)}
+                              className="px-3 py-2 rounded-lg text-xs font-bold transition-all active:scale-95"
                               style={{ background: "#fee2e2", color: "#c0392b" }}
                             >
                               Delete
@@ -2235,8 +2107,238 @@ function ManageModal({
                         );
                       })
                     ) : (
-                      <p className="text-sm text-center py-4" style={{ color: "#c0b090" }}>
-                        No items in this category yet
+                      <p className="text-sm text-center py-6 col-span-full" style={{ color: "#c0b090" }}>
+                        No categories found
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {activeTab === "item" && (
+              <div className="space-y-6">
+                {/* Add Item Card */}
+                <div className="p-5 rounded-2xl" style={{ background: "#faf7f4", border: "2px dashed #c8b090" }}>
+                  <h3 className="text-lg font-bold mb-4" style={{ color: "#3b2212" }}>Add New Item</h3>
+                  
+                  <div className="space-y-4">
+                    {/* Category Select */}
+                    <div>
+                      <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>Category</label>
+                      <select
+                        value={selectedCategory}
+                        onChange={(e) => setSelectedCategory(e.target.value)}
+                        className="w-full rounded-xl px-4 py-3 text-base outline-none min-h-[48px]"
+                        style={{ 
+                          background: getCategoryBgColor(selectedCategory), 
+                          border: `1.5px solid ${getCategoryColor(selectedCategory)}`,
+                          color: getCategoryColor(selectedCategory),
+                          fontWeight: "500"
+                        }}
+                      >
+                        {sortedCategories.map((cat) => (
+                          <option key={cat} value={cat} style={{ color: "#3b2212" }}>
+                            {cat}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Subcategory dropdown */}
+                    {currentSubcategories.length > 0 && (
+                      <div>
+                        <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>Subcategory <span style={{ color: "#c0392b" }}>*</span></label>
+                        <select
+                          value={selectedSubcategory || currentSubcategories[0]}
+                          onChange={e => setSelectedSubcategory(e.target.value)}
+                          className="w-full rounded-xl px-4 py-3 text-base outline-none min-h-[48px]"
+                          style={{ background: "white", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
+                        >
+                          {currentSubcategories.map(sub => (
+                            <option key={sub} value={sub}>{sub}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {/* Item Name */}
+                    <div>
+                      <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>Item Name</label>
+                      <input
+                        type="text"
+                        value={itemName}
+                        onChange={(e) => setItemName(e.target.value)}
+                        placeholder="Item name"
+                        className="w-full rounded-xl px-4 py-3 text-base outline-none min-h-[48px]"
+                        style={{ background: "white", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
+                      />
+                    </div>
+
+                    {/* Price */}
+                    <div>
+                      <label className="text-sm font-semibold block mb-2" style={{ color: "#3b2212" }}>Price (Medium Size) - ₱</label>
+                      <input
+                        type="number"
+                        value={itemPrice}
+                        onChange={(e) => setItemPrice(e.target.value)}
+                        placeholder="Price"
+                        className="w-full rounded-xl px-4 py-3 text-base outline-none min-h-[48px]"
+                        style={{ background: "white", border: "1.5px solid #e8ddd4", color: "#3b2212" }}
+                      />
+                      <p className="text-xs mt-1" style={{ color: "#a07850" }}>Large size automatically +₱20</p>
+                    </div>
+
+                    {/* Recipe Builder */}
+                    <div className="pt-2 border-t-2" style={{ borderColor: "#e8ddd4" }}>
+                      <div className="flex justify-between items-center mb-3">
+                        <label className="text-sm font-semibold" style={{ color: "#3b2212" }}>Recipe / Ingredients</label>
+                        <label className="flex items-center gap-2 cursor-pointer select-none">
+                          <span className="text-xs" style={{ color: "#a07850" }}>Food (no recipe)</span>
+                          <div
+                            onClick={() => { setIsItemFood(v => !v); setNewItemIngredients([]); }}
+                            className="w-10 h-5 rounded-full transition-all relative"
+                            style={{ background: isItemFood ? "#2d7a38" : "#e8ddd4" }}
+                          >
+                            <div
+                              className="w-4 h-4 rounded-full bg-white absolute top-0.5 transition-all"
+                              style={{ left: isItemFood ? "22px" : "2px" }}
+                            />
+                          </div>
+                        </label>
+                      </div>
+
+                      {isItemFood ? (
+                        <div className="p-3 rounded-xl text-sm text-center" style={{ background: "#f0faf0", color: "#2d7a38", border: "1.5px solid #c8e6c9" }}>
+                          Food item — no recipe needed
+                        </div>
+                      ) : (
+                        <>
+                          {inventoryKeys.length === 0 ? (
+                            <p className="text-xs text-center py-3 rounded-xl" style={{ background: "#faf7f4", color: "#c0392b" }}>
+                              No inventory items. Add inventory first.
+                            </p>
+                          ) : (
+                            <>
+                              {newItemIngredients.length > 0 && (
+                                <div className="space-y-2 mb-3 bg-white rounded-xl p-3 border border-[#e8ddd4]">
+                                  <div className="grid grid-cols-12 gap-1 text-xs font-semibold" style={{ color: "#a07850" }}>
+                                    <span className="col-span-5">Ingredient</span>
+                                    <span className="col-span-3 text-center">Med</span>
+                                    <span className="col-span-3 text-center">Lg</span>
+                                    <span className="col-span-1" />
+                                  </div>
+                                  {newItemIngredients.map((row, idx) => (
+                                    <div key={idx} className="grid grid-cols-12 gap-1 items-center">
+                                      <select
+                                        value={row.ingredient}
+                                        onChange={(e) => handleIngredientChangeForItem(idx, "ingredient", e.target.value)}
+                                        className="col-span-5 rounded-lg px-2 py-2 text-xs outline-none min-h-[36px]"
+                                        style={{ background: "#faf7f4", border: "1px solid #e8ddd4", color: "#3b2212" }}
+                                      >
+                                        {inventoryKeys.map(key => (
+                                          <option key={key} value={key}>{key}</option>
+                                        ))}
+                                      </select>
+                                      <input
+                                        type="number"
+                                        value={row.medQty}
+                                        onChange={(e) => handleIngredientChangeForItem(idx, "medQty", e.target.value)}
+                                        className="col-span-3 rounded-lg px-2 py-2 text-xs text-center outline-none min-h-[36px]"
+                                        style={{ background: "#faf7f4", border: "1px solid #e8ddd4", color: "#3b2212" }}
+                                      />
+                                      <input
+                                        type="number"
+                                        value={row.lgQty}
+                                        onChange={(e) => handleIngredientChangeForItem(idx, "lgQty", e.target.value)}
+                                        className="col-span-3 rounded-lg px-2 py-2 text-xs text-center outline-none min-h-[36px]"
+                                        style={{ background: "#faf7f4", border: "1px solid #e8ddd4", color: "#3b2212" }}
+                                      />
+                                      <button
+                                        onClick={() => handleRemoveIngredientRowForItem(idx)}
+                                        className="col-span-1 w-7 h-7 rounded-full flex items-center justify-center text-xs active:scale-95 transition-all"
+                                        style={{ background: "#fee2e2", color: "#c0392b" }}
+                                      >×</button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              <button
+                                onClick={handleAddIngredientRowForItem}
+                                className="w-full py-2 rounded-xl text-sm font-semibold active:scale-95 min-h-[40px] transition-all"
+                                style={{ background: "#faf7f4", color: "#3b2212", border: "1.5px dashed #c8b090" }}
+                              >
+                                Add Ingredient
+                              </button>
+                            </>
+                          )}
+                        </>
+                      )}
+                    </div>
+
+                    <button
+                      onClick={handleAddItem}
+                      className="w-full py-4 rounded-xl font-bold text-lg transition-all active:scale-95 touch-manipulation min-h-[52px] hover:shadow-lg"
+                      style={{ background: selectedCategory ? getCategoryColor(selectedCategory) : "#3b2212", color: "white" }}
+                    >
+                      Add Item
+                    </button>
+                  </div>
+                </div>
+
+                {message && (
+                  <div
+                    className={`p-4 rounded-xl text-center transition-all duration-300 flex items-center justify-center gap-2 ${
+                      message.type === "success" 
+                        ? "bg-green-50 text-green-700 border-2 border-green-200" 
+                        : "bg-red-50 text-red-700 border-2 border-red-200"
+                    }`}
+                  >
+                    <span className="font-semibold">{message.text}</span>
+                  </div>
+                )}
+
+                {/* Items List */}
+                <div>
+                  <h3 className="text-lg font-bold mb-4" style={{ color: "#3b2212" }}>Items in {selectedCategory} ({filteredItems.length})</h3>
+
+                  {filteredItems.length > 3 && (
+                    <div className="mb-4">
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Search items..."
+                        className="w-full rounded-xl px-4 py-3 text-sm outline-none border-2"
+                        style={{ borderColor: "#e8ddd4", background: "#faf7f4", color: "#3b2212" }}
+                      />
+                    </div>
+                  )}
+
+                  <div className="grid gap-3 grid-cols-1 md:grid-cols-2">
+                    {filteredItems.length > 0 ? (
+                      filteredItems.map((item) => {
+                        const catColor = getCategoryColor(selectedCategory);
+                        return (
+                          <div
+                            key={item}
+                            className="p-4 rounded-xl border-2 transition-all hover:shadow-md flex justify-between items-center"
+                            style={{ background: `${catColor}08`, borderColor: `${catColor}40` }}
+                          >
+                            <span className="text-sm font-semibold" style={{ color: catColor }}>{item}</span>
+                            <button
+                              onClick={() => handleDeleteClick("item", item, selectedCategory)}
+                              className="px-3 py-2 rounded-lg text-xs font-bold transition-all active:scale-95"
+                              style={{ background: "#fee2e2", color: "#c0392b" }}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <p className="text-sm text-center py-6 col-span-full" style={{ color: "#c0b090" }}>
+                        No items in this category
                       </p>
                     )}
                   </div>
@@ -2311,6 +2413,8 @@ export default function POSLayout() {
 
   useEffect(() => {
     const itemUnsubscribes: Map<string, () => void> = new Map();
+    // Track which category name is already claimed by a doc ID (first one wins)
+    const seenCategoryNames = new Map<string, string>(); // catName → docId
 
     const catUnsub = onSnapshot(collection(db, "categories"), (catSnap) => {
       // Unsubscribe removed categories
@@ -2322,34 +2426,53 @@ export default function POSLayout() {
         }
       });
 
+      // Build cache: categoryName → first doc ID (skip duplicates)
+      const newCache: Record<string, string> = {};
+      catSnap.docs.forEach((catDoc) => {
+        const catName = catDoc.data().name as string;
+        if (!catName) return;
+        if (!newCache[catName]) {
+          newCache[catName] = catDoc.id; // first doc wins
+        }
+      });
+      setCategoryDocIdCache(newCache);
+
       catSnap.docs.forEach((catDoc) => {
         const catData = catDoc.data();
         if (!catData.name) return;
-        if (itemUnsubscribes.has(catDoc.id)) return; // already listening
-
         const catName = catData.name as string;
+
+        // Skip duplicate category docs — only listen to the "first" doc per name
+        if (newCache[catName] !== catDoc.id) return;
+        if (itemUnsubscribes.has(catDoc.id)) return; // already listening
 
         const itemUnsub = onSnapshot(collection(db, "categories", catDoc.id, "menuItems"), (itemSnap) => {
           const newProducts: string[] = [];
           const newPrices: Record<string, { M: number; L: number }> = {};
           const newColors: Record<string, { bg: string; activeBg: string; text: string }> = {};
           const newRecipes: Recipes = {};
+          const newSubcats: Record<string, string> = {};
 
           itemSnap.docs.forEach((itemDoc) => {
             const data = itemDoc.data();
             if (!data.name) return;
             newProducts.push(data.name);
-            newPrices[data.name] = {
-              M: data.prices?.medium || 0,
-              L: data.prices?.large || 0,
-            };
+            // Support food (prices.single) and drinks (prices.medium/large)
+            const singlePrice = data.prices?.single || 0;
+            const medPrice = data.prices?.medium || singlePrice;
+            const lgPrice = data.prices?.large || singlePrice;
+            newPrices[data.name] = { M: medPrice, L: lgPrice };
             const color = categoryColors[catName]?.activeBg || catData.color || "#3b2212";
             newColors[data.name] = { bg: `${color}20`, activeBg: color, text: color };
             if (data.recipes && Object.keys(data.recipes).length > 0) {
               newRecipes[data.name] = data.recipes;
             }
+            if (data.subcategory) {
+              newSubcats[data.name] = data.subcategory;
+            }
           });
 
+          setDynamicSubcategories(prev => ({ ...prev, ...newSubcats }));
           setDynamicProducts(prev => ({
             ...prev,
             [catName]: sortAlphabetically(newProducts),
@@ -2448,6 +2571,9 @@ export default function POSLayout() {
   const [dynamicProducts, setDynamicProducts] = useState<Record<string, string[]>>({});
   const [dynamicPrices, setDynamicPrices] = useState<Record<string, { M: number; L: number }>>({});
   const [dynamicItemColors, setDynamicItemColors] = useState<Record<string, { bg: string; hoverBg?: string; activeBg: string; text: string }>>({});
+  const [dynamicSubcategories, setDynamicSubcategories] = useState<Record<string, string>>({});
+  // Cache: categoryName → first Firestore doc ID (avoids duplicates issue)
+  const [categoryDocIdCache, setCategoryDocIdCache] = useState<Record<string, string>>({});
 
   const [nonCashName, setNonCashName] = useState("");
   const [nonCashNumber, setNonCashNumber] = useState("");
@@ -2626,13 +2752,20 @@ export default function POSLayout() {
   });
   
   // Sort subcategory products alphabetically
-  const frappeProducts = {
+  const baseFrappeProducts: Record<string, string[]> = {
     "Coffee Based": sortAlphabetically(["Java Chip", "Coffee Jelly", "Dark Mocha", "Caramel"]),
     "Cream Based": sortAlphabetically(["Vanilla", "Cookies & Cream", "Strawberries & Cream", "Blue Berries & Cream", "Choco Chip", "Caramel", "Salted Caramel"]),
     "Tea Based": sortAlphabetically(["Wintermelon", "Okinawa", "Capuccino"]),
   };
+  const frappeProducts: Record<string, string[]> = { ...baseFrappeProducts };
+  (allProducts["Frappe"] || []).forEach(itemName => {
+    const sub = dynamicSubcategories[itemName];
+    if (sub && frappeProducts[sub] !== undefined && !frappeProducts[sub].includes(itemName)) {
+      frappeProducts[sub] = sortAlphabetically([...frappeProducts[sub], itemName]);
+    }
+  });
 
-  const foodProducts: Record<string, string[]> = {
+  const baseFoodProducts: Record<string, string[]> = {
     "Grilled / Fried": sortAlphabetically(["Liempo", "Leg Quarters"]),
     "Sides & Snacks": sortAlphabetically(["French Fries", "Chicken Fingers", "Nachos", "Quesadillas"]),
     "Sandwiches & Burgers": sortAlphabetically(["Burger", "Cheese Burger", "Ham & Cheese"]),
@@ -2642,6 +2775,17 @@ export default function POSLayout() {
     Pasta: sortAlphabetically(["Spaghetti", "Tuna Pesto"]),
     Salads: sortAlphabetically(["Vegetable Salad"]),
   };
+  const foodProducts: Record<string, string[]> = { ...baseFoodProducts };
+  (allProducts["Food & Bites"] || []).forEach(itemName => {
+    const sub = dynamicSubcategories[itemName];
+    if (sub) {
+      if (foodProducts[sub] && !foodProducts[sub].includes(itemName)) {
+        foodProducts[sub] = sortAlphabetically([...foodProducts[sub], itemName]);
+      } else if (!foodProducts[sub]) {
+        foodProducts[sub] = [itemName];
+      }
+    }
+  });
 
   const coffeePrices: Record<string, { M: number; L: number }> = {
     "Americano":           { M: 100, L: 120 },
@@ -2768,7 +2912,7 @@ export default function POSLayout() {
     }
   };
 
-  const handleAddItem = async (item: { name: string; price: number; category: string; isFood?: boolean; recipe?: { Medium: Record<string, number>; Large: Record<string, number> } }) => {
+  const handleAddItem = async (item: { name: string; price: number; category: string; subcategory?: string; isFood?: boolean; recipe?: { Medium: Record<string, number>; Large: Record<string, number> } }) => {
     const categoryColor = categoryColors[item.category]?.activeBg || "#3b2212";
 
     // Optimistic local update
@@ -2778,38 +2922,49 @@ export default function POSLayout() {
     }));
     setDynamicPrices(prev => ({
       ...prev,
-      [item.name]: { M: item.price, L: item.price + 20 }
+      [item.name]: { M: item.price, L: item.isFood ? item.price : item.price + 20 }
     }));
     setDynamicItemColors(prev => ({
       ...prev,
       [item.name]: { bg: `${categoryColor}20`, activeBg: categoryColor, text: categoryColor }
     }));
+    if (item.subcategory) {
+      setDynamicSubcategories(prev => ({ ...prev, [item.name]: item.subcategory! }));
+    }
 
     // Save to categories/{categoryId}/menuItems/{slug}
     try {
       const slug = item.name.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
-      const catQuery = query(collection(db, "categories"), where("name", "==", item.category));
-      const catSnap = await getDocs(catQuery);
 
-      if (catSnap.empty) {
-        console.error("Category not found in Firestore:", item.category);
-        return;
+      // Use cached doc ID — avoids duplicate category docs problem
+      let categoryDocId = categoryDocIdCache[item.category];
+
+      if (!categoryDocId) {
+        // Not in cache yet — create the category doc in Firestore
+        const color = categoryColors[item.category]?.activeBg || "#3b2212";
+        const newCatRef = await addDoc(collection(db, "categories"), {
+          name: item.category,
+          color,
+          isDefault: true,
+          createdAt: serverTimestamp(),
+        });
+        categoryDocId = newCatRef.id;
+        setCategoryDocIdCache(prev => ({ ...prev, [item.category]: categoryDocId }));
       }
 
-      const categoryDocId = catSnap.docs[0].id;
       const menuItemRef = doc(db, "categories", categoryDocId, "menuItems", slug);
       await setDoc(menuItemRef, {
         name: item.name,
         categoryName: item.category,
-        prices: {
-          medium: item.price,
-          large: item.price + 20,
-        },
+        hasSizes: !item.isFood,
+        isFood: item.isFood || false,
+        prices: item.isFood
+          ? { single: item.price }
+          : { medium: item.price, large: item.price + 20 },
         recipes: item.recipe || {},
         hasRecipes: !!(item.recipe && Object.keys(item.recipe.Medium || {}).length > 0),
-        isFood: item.isFood || false,
         status: "active",
-        subcategory: null,
+        subcategory: item.subcategory || null,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
